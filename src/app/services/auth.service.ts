@@ -44,7 +44,7 @@ export class AuthService {
       const hashUnquoted = await this.hashSHA256(unquotedInput);
 
       const targetHash = (environment as any).passwordHash?.toLowerCase() || '';
-      const defaultHash = (environment as any).defaultHash?.toLowerCase() || 'd602aa475e6b1b662d94cbe37f6f95e7b161e19c4c0a874dd664e01d80c3c247';
+      const defaultHash = (environment as any).defaultHash?.toLowerCase() || '59effd941b55ad51da68fd97a0ae04c522ee0b05e7fec9d0794871a60ca250eb';
 
       const hashesToTest = [hashTrimmed, hashRaw, hashUnquoted];
       const validHashes = [targetHash, defaultHash].filter(Boolean);

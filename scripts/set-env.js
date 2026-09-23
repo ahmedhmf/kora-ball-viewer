@@ -4,14 +4,36 @@ const crypto = require('crypto');
 
 // Default fallback password and hash
 const DEFAULT_PASSWORD = 'K0rA#9xV$2mQ!7zL%4wP@8bN^3jR&1yF*5tW';
-const DEFAULT_HASH = 'd602aa475e6b1b662d94cbe37f6f95e7b161e19c4c0a874dd664e01d80c3c247';
+const DEFAULT_HASH = '59effd941b55ad51da68fd97a0ae04c522ee0b05e7fec9d0794871a60ca250eb';
 
-// Load .env for local development if present
-try {
-  require('dotenv').config();
-} catch (e) {
-  // dotenv not available in production build
+// Built-in .env parser (zero external dependencies required)
+function loadDotEnv() {
+  const envPath = path.join(__dirname, '../.env');
+  if (fs.existsSync(envPath)) {
+    try {
+      const content = fs.readFileSync(envPath, 'utf8');
+      content.split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+          const idx = trimmed.indexOf('=');
+          const key = trimmed.substring(0, idx).trim();
+          let val = trimmed.substring(idx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1).trim();
+          }
+          if (key) {
+            process.env[key] = val;
+          }
+        }
+      });
+      console.log('📄 Parsed local .env file successfully.');
+    } catch (err) {
+      console.warn('⚠️ Could not parse .env file:', err.message);
+    }
+  }
 }
+
+loadDotEnv();
 
 function cleanVal(val) {
   if (!val) return '';
@@ -23,17 +45,19 @@ function cleanVal(val) {
 }
 
 function getTargetHash() {
-  const envHash = cleanVal(process.env.KORA_APP_PASSWORD_HASH);
   const envPassword = cleanVal(process.env.KORA_APP_PASSWORD);
+  const envHash = cleanVal(process.env.KORA_APP_PASSWORD_HASH);
 
-  if (envHash) {
-    console.log('🔒 Using KORA_APP_PASSWORD_HASH from environment.');
-    return envHash.toLowerCase();
+  // KORA_APP_PASSWORD takes priority!
+  if (envPassword) {
+    const hash = crypto.createHash('sha256').update(envPassword).digest('hex').toLowerCase();
+    console.log(`🔒 Computed SHA-256 hash for KORA_APP_PASSWORD ("${envPassword}"): ${hash}`);
+    return hash;
   }
 
-  if (envPassword) {
-    console.log('🔒 Computing SHA-256 hash for KORA_APP_PASSWORD from environment.');
-    return crypto.createHash('sha256').update(envPassword).digest('hex').toLowerCase();
+  if (envHash) {
+    console.log(`🔒 Using explicit KORA_APP_PASSWORD_HASH: ${envHash}`);
+    return envHash.toLowerCase();
   }
 
   console.log('🔒 Using default high-entropy password hash.');
@@ -64,4 +88,4 @@ const prodEnvContent = `export const environment = {
 fs.writeFileSync(path.join(envDir, 'environment.ts'), devEnvContent, 'utf8');
 fs.writeFileSync(path.join(envDir, 'environment.prod.ts'), prodEnvContent, 'utf8');
 
-console.log(`✅ Successfully updated environment files with password hash: ${targetHash}`);
+console.log(`✅ Environment files updated. Active Target Hash: ${targetHash}`);
