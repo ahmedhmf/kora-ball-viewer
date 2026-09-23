@@ -5,8 +5,9 @@
   "author": "KORA",
   "scripts": {
     "ng": "ng",
-    "start": "ng serve",
-    "build": "ng build",
+    "prebuild": "node scripts/set-env.js",
+    "start": "node scripts/set-env.js && ng serve",
+    "build": "node scripts/set-env.js && ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
