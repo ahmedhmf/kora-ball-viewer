@@ -1,6 +1,8 @@
 {
   "name": "kora-visualizer",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "KORA 3D Ball Visualizer Application",
+  "author": "KORA",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
@@ -17,6 +19,11 @@
     "@angular/forms": "^22.0.0",
     "@angular/platform-browser": "^22.0.0",
     "@angular/router": "^22.0.0",
+    "@babylonjs/core": "^9.27.1",
+    "@babylonjs/loaders": "^9.27.1",
+    "@ngrx/signals": "^22.0.1",
+    "mediabunny": "^1.58.1",
+    "mp4-muxer": "^5.2.2",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
