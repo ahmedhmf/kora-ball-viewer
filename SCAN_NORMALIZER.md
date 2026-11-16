@@ -1,34 +1,27 @@
-# KORA browser-only scan normalizer (experimental)
+# KORA scan normalizer — experimental panel-by-panel registration
 
-This branch no longer uses OpenCV.js or JSFeat to register sheets. Its worker runs pure JavaScript and compares the **whole printed 32-panel boundary pattern** with the child scan and the exact 1024×1024 master texture. A deterministic registration is then used to warp the original pixels into the target UV space. No keypoint correspondences, WebAssembly or server processing are required.
+## Verification status
+The **latest upside-down WhatsApp PDF** and supplied original blank/reference texture were examined in an offline Python/OpenCV prototype. A local 32-panel fit gives a visibly better but **still imperfect** result. The browser algorithm below was ported to the web worker and has **not yet passed an end-to-end browser run**; do not merge until visually checked.
+
+## Method
+1. Determine the printed sheet's 0°/180° orientation using the QR position.
+2. Normalize scan height to 1024 logical pixels while preserving the original full-resolution pixels for final sampling.
+3. Estimate edge-distance maps in pure JavaScript (no OpenCV, no JSFeat, no WASM).
+4. Fit each of the 32 known printed panel outlines independently using bounded local translation and X/Y scale.
+5. Transfer child-painted pixels into the fixed 1024×1024 KORA layout with 4px edge margin.
+6. Refuse export if too many panels have poor local confidence.
+
+**Calibration caveat:** The scan initialization and target UV transform are calibrated to the exact user-provided printable sheet and master texture. Other revisions, significantly different phone framing, or strong perspective distortions may still fail or produce bad results. Output requires visual inspection.
 
 ## Test
-
 ```bash
 git switch feature/browser-scan-normalizer
 git pull
 npm install
 npm start
 ```
+Upload the three known files: child scan PDF, blank KORA print PDF, exact 1024 master JPG. The worker should show QR orientation and a count of aligned panels.
 
-1. Upload the colored scan PDF/image, the matching original blank KORA printable PDF and the canonical 1024×1024 texture.
-2. Click **Auto Align & Remove Page Text**.
-3. Observe stages for scan outline alignment, target outline alignment and compositing.
-4. Inspect the generated PNG and 3D preview carefully, particularly around panel borders.
+The child's handwriting may be naturally upside down relative to the printed sheet; it is intentionally not rotated independently.
 
-The confidence counts now indicate sampled **panel-edge positions** near detected image edges, **not** ORB feature matches. Low confidence produces a visible error instead of exporting unverified art.
-
-## Current limitations
-
-- The known panel-boundary coordinates are fixed to the **specific KORA blank template** provided for testing. Different printed template revisions require a new geometry definition.
-- The whole-sheet matcher currently optimizes translation, rotation and independent scale factors. It does **not** yet correct strong projective distortion, curvature or folds.
-- Edge-based registration is still experimental. It has not been validated as producing a usable output in Chrome on the user's real three uploaded files.
-- Processing uses the browser Worker watchdog; there is no backend. PDF.js is still loaded from a CDN and may need bundling for complete offline support.
-- Cropping/edge margin may need further adjustment after successful alignment.
-
-## QR-orientation fix (test batch 2026-11-16)
-The latest uploaded WhatsApp scan is rotated 180° relative to the **printed** blank sheet: its QR code appears top-right rather than bottom-left. A unique QR-density corner landmark is now required for automatic scan orientation and serves as a geometric registration anchor. This also enables non-uniform X/Y scan scaling. If the QR landmark or enough outlines are not found, the worker rejects the output.
-
-Important: rotating the **printed page** upright does not guarantee a child's handwritten words will be upright; in this uploaded example much of the child writing was drawn upside-down relative to the print sheet. The 3D UV texture must use the template's printed orientation.
-
-The output still requires a real-browser review and may need piecewise panel-by-panel registration to correct residual camera perspective. Do not merge the feature until a complete scan passes visual validation.
+The feature is a draft PR and should remain unmerged until tested in a real browser.
