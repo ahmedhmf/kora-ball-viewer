@@ -1,22 +1,37 @@
-# Browser-only scan normalizer (experimental)
+# Browser-only scan normalizer — blank-template registration prototype
 
-## How to try
-1. Start the Angular app normally with `npm install && npm start`.
-2. Unlock the viewer, and find **Scan to 3D Texture** in the sidebar.
-3. Upload a child's scanned PDF/JPG and the **exact 1024×1024 master texture image**.
-4. Choose **Auto align scan**. Inspect the generated preview.
-5. If detection is uncertain, choose four identical **panel outline corners** on the Scan image and the same four on Master **in the same order**. Use widely separated corners spanning the entire net. Choose **Align by 4 points**.
-6. Only after visual review, choose **Render on ball**; or download the PNG.
+This implementation replaces the original four-point UI with a two-stage geometric registration:
+1. **Blank printed sheet PDF → child's scanned PDF**: match the known outlines and static page markings.
+2. **Blank printed sheet PDF → known-good 1024×1024 renderer texture**: map that exact panel net into the renderer's texture coordinates.
+3. Compose the two transforms to warp the child scan directly into 1024×1024.
+4. Extract approximately 32 closed polygon panels from the blank printed sheet and mask out margins, branding outside panels, QR code and handwritten contact details.
 
-## Architecture
-All processing happens locally in the browser: PDF.js renders PDF page 1, OpenCV.js estimates a homography and warps into a 1024×1024 PNG, then the existing Babylon model-loader applies it. No backend or upload endpoint was added.
+All image processing happens in the browser. No backend and no AI model needed.
 
-**Prototype limitation:** PDF.js and OpenCV.js are loaded on demand from public CDNs, so first-time use needs Internet access. For a production/offline deployment, vend these scripts under public/vendor and update their URLs in the service.
+## How to test in Angular
+- Checkout `feature/browser-scan-normalizer`, then run `npm ci && npm start`.
+- Unlock the app.
+- Under **Scan to 3D Texture**, upload these three files:
+  1. the colored scan (e.g. `WhatsApp Scan 2026-09-25 at 21.17.50.pdf`);
+  2. the original uncolored printing file (`Kora 50 Copies(1).pdf`);
+  3. the exact tested 1024×1024 texture master image.
+- Click **Auto Align & Remove Page Text**, review preview, then **Render on Ball** or **Download PNG**.
 
-## Known limits / follow-ups
-- This is a proof of concept. No live-browser build or visual accuracy test has been completed.
-- Automatic ORB matching can fail when the child's coloring differs drastically from the master. Such results are labeled **estimated** and cannot be sent directly to the model.
-- Manual 4-point alignment corrects a planar perspective transform but not local page curvature or non-planar distortion.
-- No automatic ink masking, shadow removal, panel-wise warping, orientation recognition, color cleanup, or page selection beyond page 1 yet.
-- The canonical master PNG is **not included** in this branch: upload the exact reference texture that is already confirmed to work in the current 3D viewer.
-- The original project's client-side password check is not a secure authentication boundary.
+No manual corner selection is required.
+
+## Local algorithm verification
+The method was independently tested using desktop OpenCV against the two user PDFs and reference JPG:
+- blank-to-scan: **39 inliers / 58 feature matches**
+- blank-to-render-texture: **36 inliers / 92 feature matches**
+- closed panel contours detected: **32**
+- generated 1024×1024 proof PNG with outside-of-panel contact text and QR removed
+
+These are **offline OpenCV algorithm checks**, not evidence that the Angular browser/WASM implementation passes yet. Browser execution, build, 3D output, and compatibility still require validation.
+
+## Limitations
+- OpenCV.js & PDF.js currently load from static external CDNs (no file uploaded). To run offline, vendor their scripts locally.
+- The blank printable sheet must be provided as input until we bundle a preprocessed reference with the app.
+- Automatic feature matching can fail with blurred, heavily cropped or strongly distorted photos; it rejects low-confidence results rather than blindly warping.
+- The 32-panel contour mask has a few edge artifacts due to scanned outlines, and the panel seam boundaries may need refinement.
+- No local distortion correction, shadow/lighting correction or direct WhatsApp integration yet.
+- Existing application client-side password handling is NOT secure authentication.
