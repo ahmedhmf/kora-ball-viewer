@@ -1,25 +1,18 @@
-# KORA scan orientation only
+# KORA canonical full-page registration — experimental
 
-**Scope:** Correct the rotation of the complete printed sheet. This feature does NOT align the artwork to the 3D UV map, mask panels, recolor, crop, or modify individual drawings.
+The task is to straighten a scan and produce **one continuous 1024×1024 image** whose football net has the same size and location as the known KORA reference texture. This is **not** PDF orientation metadata and **not** panel-wise warping.
 
-- Accept PDF, JPG, PNG and WEBP with one upload.
-- Auto-detect KORA's printed QR-code corner: bottom-left is canonical.
-- Use native browser BarcodeDetector when supported; fallback QR-density heuristic is marked uncertain.
-- Show an entire-page preview with manual 0°, 90°, 180°, 270° selection.
-- PDF export uses pdf-lib to change only page rotation metadata. Embedded scan images or vector drawing contents are not re-rendered or resampled. PDF save still produces a new PDF file.
-- Image export uses a lossless PNG with full resolution and 90° rotation only.
-- No OpenCV, JSFeat, or local AI model needed.
+## Processing
+- Upload one PDF, JPG, PNG or WEBP. PDF.js renders only the first page.
+- Determine the printed sheet orientation from the bottom-left printed QR-code landmark. If uncertain, manually choose 0/90/180/270 rotation.
+- Work with all 32 panel boundary line samples *together* to optimize one constrained whole-page affine registration (translation, independent X/Y scale, small skew and rotation).
+- Map the entire scanned page continuously into a **1024×1024** canvas using the calibrated KORA blank-sheet → master mapping. **No panel masks, no clipping around individual polygons, no recoloring, no removal of handwriting.**
+- Optional fine controls for X/Y position, width, height and small rotation. This is a fallback for scans with perspective, not a request to choose polygon points.
+- Download PNG. No OpenCV, JSFeat, AI model or backend.
 
-## Local test
-```bash
-git switch feature/browser-scan-normalizer
-git pull origin feature/browser-scan-normalizer
-npm install
-npm start
-```
-
-Use the upside-down `WhatsApp Scan 2026-09-25 at 21.25.58.pdf`. The printed QR on that sample is at top-right, so the intended correction is **180° clockwise**. Verify the entire preview, then download an oriented PDF. If detection confidence is uncertain, inspect and select the correct angle manually.
-
-**Important:** Rotating a printed sheet is NOT sufficient to map it to the 1024×1024 UV texture or to remove scanner perspective distortion. The current UI intentionally does not offer the previous broken "render on ball" export. A distinct texture-mapping feature would need separate validated work.
-
-**Multi-page PDFs:** The selected angle is applied to every page. For PDFs whose pages have mixed orientations, split the file or correct pages individually.
+## Limitations
+- The default target coordinates are calibrated to the exact 1024×1024 KORA master image. Different master layouts need another calibration.
+- Full-page affine fitting does not perfectly eliminate strong perspective distortion, page curvature, or non-linear scanner effects. The user should inspect the output against the known-good master.
+- QR-density fallback is only a heuristic when native BarcodeDetector is missing. Explicit rotation control prevents silent mistakes.
+- **Do not merge** the draft PR until the Angular worker output has been validated in-browser with the original uploaded scanned PDFs.
+- The original scan's handwriting orientation is preserved relative to its printed panels.

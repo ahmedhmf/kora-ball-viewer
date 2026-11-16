@@ -1,205 +1,169 @@
 import { Injectable } from '@angular/core';
-import { PDFDocument, degrees } from 'pdf-lib';
 
 export type QuarterTurn = 0 | 90 | 180 | 270;
-export type OrientationGuess = {
+export interface RegistrationOptions {
   rotation: QuarterTurn;
-  confidence: 'high' | 'uncertain';
-  explanation: string;
-};
+  shiftX: number;
+  shiftY: number;
+  scaleX: number;
+  scaleY: number;
+  fineRotation: number;
+}
+export interface NormalizedPage {
+  blob: Blob;
+  previewUrl: string;
+  imageData: ImageData;
+  score: number;
+  nearEdges: number;
+  samples: number;
+}
 
+/** Whole-sheet registration: no masks, panel crops or individual polygon transforms. */
 @Injectable({ providedIn: 'root' })
 export class ScanNormalizerService {
   private pdfPromise?: Promise<any>;
   private readonly pdfUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   private readonly pdfWorkerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-  private loadScript(url: string): Promise<void> {
+  private script(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      const timer = window.setTimeout(() => reject(new Error('Timed out loading PDF reader')), 25000);
-      script.async = true;
-      script.src = url;
-      script.onload = () => { clearTimeout(timer); resolve(); };
-      script.onerror = () => { clearTimeout(timer); reject(new Error('Cannot load the PDF reader')); };
-      document.head.append(script);
+      const element = document.createElement('script');
+      const timeout = setTimeout(() => reject(new Error('PDF.js could not load within 25 seconds')), 25000);
+      element.src = url;
+      element.async = true;
+      element.onload = () => { clearTimeout(timeout); resolve(); };
+      element.onerror = () => { clearTimeout(timeout); reject(new Error('PDF.js download failed')); };
+      document.head.append(element);
     });
   }
 
-  private pdfjs(): Promise<any> {
+  private async pdf(): Promise<any> {
     return this.pdfPromise ??= (async () => {
-      if (!(window as any).pdfjsLib) await this.loadScript(this.pdfUrl);
-      const pdf = (window as any).pdfjsLib;
-      if (!pdf) throw new Error('PDF.js is unavailable');
-      pdf.GlobalWorkerOptions.workerSrc = this.pdfWorkerUrl;
-      return pdf;
+      if (!(window as any).pdfjsLib) await this.script(this.pdfUrl);
+      const api = (window as any).pdfjsLib;
+      api.GlobalWorkerOptions.workerSrc = this.pdfWorkerUrl;
+      return api;
     })().catch((error: unknown) => { this.pdfPromise = undefined; throw error; });
   }
 
-  async preview(file: File): Promise<HTMLCanvasElement> {
-    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    if (!isPdf && !file.type.startsWith('image/'))
-      throw new Error('Choose a PDF, JPG, PNG or WEBP file.');
-    if (isPdf) {
-      const pdf = await this.pdfjs();
-      const doc = await pdf.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  async readFile(file: File): Promise<HTMLCanvasElement> {
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      const api = await this.pdf();
+      const doc = await api.getDocument({data: new Uint8Array(await file.arrayBuffer())}).promise;
       try {
         const page = await doc.getPage(1);
-        const original = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, 1600 / Math.max(original.width, original.height));
-        const viewport = page.getViewport({ scale });
+        const base = page.getViewport({scale: 1});
+        const scale = Math.min(2, 2000 / Math.max(base.width, base.height));
+        const viewport = page.getViewport({scale});
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
-        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+        await page.render({canvasContext: canvas.getContext('2d')!, viewport}).promise;
         return canvas;
-      } finally {
-        await doc.destroy();
-      }
+      } finally { await doc.destroy(); }
     }
-    const bitmap = await createImageBitmap(file);
+    if (!file.type.startsWith('image/')) throw new Error('Upload a PDF or an image.');
+    const image = await createImageBitmap(file);
     try {
       const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+      canvas.width = image.width; canvas.height = image.height;
+      canvas.getContext('2d')!.drawImage(image, 0, 0);
       return canvas;
-    } finally { bitmap.close(); }
+    } finally { image.close(); }
   }
 
   /**
-   * The printed KORA sheet contains a QR code at bottom-left.
-   * Unlike handwritten words, this is an invariant orientation anchor.
-   * A missing/ambiguous QR is not permission to guess.
+   * The printed sheet's QR is bottom-left when upright. The density fallback
+   * deliberately returns low confidence; users can correct a wrong guess.
    */
-  async detectOrientation(canvas: HTMLCanvasElement): Promise<OrientationGuess> {
+  async guessRotation(canvas: HTMLCanvasElement): Promise<{rotation: QuarterTurn; certain: boolean}> {
     const BarcodeDetector = (window as any).BarcodeDetector;
     if (typeof BarcodeDetector === 'function') {
       try {
-        const detector = new BarcodeDetector({ formats: ['qr_code'] });
-        const codes: any[] = await detector.detect(canvas);
-        if (codes.length === 1) {
-          const box = codes[0].boundingBox;
-          const x = (box.x + box.width / 2) / canvas.width;
-          const y = (box.y + box.height / 2) / canvas.height;
-          const corner = this.corner(x, y);
-          if (corner) return {
-            rotation: this.turnForCorner(corner),
-            confidence: 'high',
-            explanation: 'Printed QR code detected at ' + corner + '.'
-          };
+        const detector = new BarcodeDetector({formats:['qr_code']});
+        const found: any[] = await detector.detect(canvas);
+        if (found.length === 1) {
+          const p = found[0].boundingBox;
+          const x = (p.x + p.width/2)/canvas.width;
+          const y = (p.y + p.height/2)/canvas.height;
+          if (x < .35 && y > .65) return {rotation:0,certain:true};
+          if (x > .65 && y < .35) return {rotation:180,certain:true};
+          if (x < .35 && y < .35) return {rotation:270,certain:true};
+          if (x > .65 && y > .65) return {rotation:90,certain:true};
         }
-      } catch { /* Fallback to QR-like corner analysis below. */ }
+      } catch { /* Some browsers do not support QR decoding. */ }
     }
-
-    const result = this.detectQrDensity(canvas);
-    if (result) return result;
-    return {
-      rotation: 0,
-      confidence: 'uncertain',
-      explanation: 'Could not reliably identify the printed QR code. Choose the correct rotation using the preview.'
-    };
-  }
-
-  private corner(x: number, y: number): string | null {
-    if (x < .36 && y < .36) return 'top-left';
-    if (x > .64 && y < .36) return 'top-right';
-    if (x < .36 && y > .64) return 'bottom-left';
-    if (x > .64 && y > .64) return 'bottom-right';
-    return null;
-  }
-
-  private turnForCorner(corner: string): QuarterTurn {
-    // Rotation applied clockwise to place the QR code at bottom-left.
-    switch (corner) {
-      case 'top-right': return 180;
-      case 'top-left': return 270;
-      case 'bottom-right': return 90;
-      default: return 0;
-    }
-  }
-
-  private detectQrDensity(canvas: HTMLCanvasElement): OrientationGuess | null {
-    const w = 320, h = Math.max(1, Math.round(320 * canvas.height / canvas.width));
-    const temp = document.createElement('canvas');
-    temp.width = w; temp.height = h;
-    const ctx = temp.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(canvas, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h).data;
-    const gray = new Uint8Array(w * h);
-    for (let i = 0; i < gray.length; i++)
-      gray[i] = (.299 * data[4*i] + .587 * data[4*i+1] + .114 * data[4*i+2]) | 0;
-    const dense = new Uint8Array(w * h);
-    for (let y = 1; y < h-1; y++) for (let x = 1; x < w-1; x++) {
-      const i = y*w+x;
-      if (Math.abs(gray[i-1]-gray[i+1]) > 25 &&
-          Math.abs(gray[i-w]-gray[i+w]) > 25) dense[i] = 1;
-    }
-    const ii = new Uint32Array((w+1)*(h+1));
-    for (let y = 0; y < h; y++) {
-      let row = 0;
-      for (let x = 0; x < w; x++) {
-        row += dense[y*w+x];
-        ii[(y+1)*(w+1)+x+1] = ii[y*(w+1)+x+1]+row;
-      }
-    }
-    const block = Math.max(12, Math.round(Math.min(w,h) * .065));
-    const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
-    const scores = corners.map(corner => {
-      const right = corner.includes('right'), bottom = corner.includes('bottom');
-      const x0 = right ? Math.floor(.65*w) : 0;
-      const x1 = right ? w : Math.floor(.35*w);
-      const y0 = bottom ? Math.floor(.65*h) : 0;
-      const y1 = bottom ? h : Math.floor(.35*h);
-      let best = 0;
-      for (let y = y0; y <= y1-block; y += 2)
-        for (let x = x0; x <= x1-block; x += 2) {
-          const x2=x+block,y2=y+block;
-          const count=ii[y2*(w+1)+x2]-ii[y*(w+1)+x2]-
-            ii[y2*(w+1)+x]+ii[y*(w+1)+x];
-          if(count > best)best=count;
+    // QR density check in page corners, not a semantic QR decoder.
+    const w = 240, h = Math.round(w*canvas.height/canvas.width);
+    const small = document.createElement('canvas');
+    small.width = w; small.height = h;
+    const ctx = small.getContext('2d',{willReadFrequently:true})!;
+    ctx.drawImage(canvas,0,0,w,h);
+    const rgba=ctx.getImageData(0,0,w,h).data;
+    const gray=new Uint8Array(w*h);
+    for(let i=0;i<gray.length;i++)
+      gray[i]=(.299*rgba[4*i]+.587*rgba[4*i+1]+.114*rgba[4*i+2])|0;
+    const corners=[{r:270,x0:0,y0:0},{r:180,x0:.75,y0:0},
+      {r:0,x0:0,y0:.75},{r:90,x0:.75,y0:.75}];
+    const scores=corners.map(c=>{
+      let sum=0;
+      for(let y=Math.max(2,Math.floor(c.y0*h));y<Math.min(h-2,Math.ceil((c.y0+.25)*h));y++)
+        for(let x=Math.max(2,Math.floor(c.x0*w));x<Math.min(w-2,Math.ceil((c.x0+.25)*w));x++){
+          const i=y*w+x;
+          if (Math.abs(gray[i-1]-gray[i+1])>24 &&
+              Math.abs(gray[i-w]-gray[i+w])>24)sum++;
         }
-      return { corner, score: best };
-    }).sort((a,b) => b.score - a.score);
-    const [first, second] = scores;
-    // Heuristic density is not a full QR decoder; only offer a suggestion.
-    if (first.score < 10 || first.score < second.score * 1.35) return null;
-    return {
-      rotation: this.turnForCorner(first.corner),
-      confidence: 'uncertain',
-      explanation: 'Possible QR code at ' + first.corner +
-        '. Please verify the page preview before exporting.'
-    };
+      return {rotation:c.r as QuarterTurn,score:sum};
+    }).sort((a,b)=>b.score-a.score);
+    if(scores[0].score>=14 && scores[0].score>scores[1].score*1.3)
+      return {rotation:scores[0].rotation,certain:false};
+    return {rotation:0,certain:false};
   }
 
-  rotatePreview(canvas: HTMLCanvasElement, degreesClockwise: QuarterTurn): HTMLCanvasElement {
-    const sideways = degreesClockwise === 90 || degreesClockwise === 270;
-    const result = document.createElement('canvas');
-    result.width = sideways ? canvas.height : canvas.width;
-    result.height = sideways ? canvas.width : canvas.height;
-    const ctx = result.getContext('2d')!;
-    ctx.translate(result.width / 2, result.height / 2);
-    ctx.rotate(degreesClockwise * Math.PI / 180);
-    ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
-    return result;
-  }
-
-  async exportFile(file: File, angle: QuarterTurn, source: HTMLCanvasElement): Promise<Blob> {
-    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-      // Set PDF page rotation metadata, preserving the actual drawings, vectors,
-      // embedded scan image and page contents; no rasterization or cropping.
-      const document = await PDFDocument.load(await file.arrayBuffer());
-      for (const page of document.getPages()) {
-        const existing = page.getRotation().angle;
-        page.setRotation(degrees((((existing + angle) % 360) + 360) % 360));
-      }
-      const bytes = await document.save();
-      const pdfBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      return new Blob([pdfBuffer], { type: 'application/pdf' });
-    }
-    const result = this.rotatePreview(source, angle);
-    return new Promise((resolve, reject) => result.toBlob(
-      blob => blob ? resolve(blob) : reject(new Error('PNG export failed')), 'image/png'
-    ));
+  async normalize(
+    original: HTMLCanvasElement,
+    options: RegistrationOptions,
+    progress: (status:string)=>void=()=>{},
+  ): Promise<NormalizedPage> {
+    const rgba=original.getContext('2d',{willReadFrequently:true})!.getImageData(
+      0,0,original.width,original.height);
+    const worker=new Worker('/workers/kora-page-registration.js?v=1');
+    return new Promise((resolve,reject)=>{
+      let finished=false;
+      let stage='Starting registration';
+      let timer:ReturnType<typeof setTimeout>;
+      const cleanup=()=>{clearTimeout(timer);worker.terminate();};
+      const fail=(error:Error)=>{
+        if(finished)return;finished=true;cleanup();reject(error);
+      };
+      const reset=()=>{
+        clearTimeout(timer);
+        timer=setTimeout(()=>fail(new Error('Whole-page alignment timed out at: '+stage)),45000);
+      };
+      worker.onerror=(event)=>fail(new Error('Alignment worker: '+event.message));
+      worker.onmessage=(event:MessageEvent)=>{
+        const msg=event.data;
+        if(msg?.type==='progress'){stage=String(msg.message);progress(stage);reset();}
+        else if(msg?.type==='error')fail(new Error(msg.message||'Alignment failed'));
+        else if(msg?.type==='complete'){
+          try {
+            const data=new ImageData(new Uint8ClampedArray(msg.pixels),1024,1024);
+            const canvas=document.createElement('canvas');
+            canvas.width=1024;canvas.height=1024;
+            canvas.getContext('2d')!.putImageData(data,0,0);
+            canvas.toBlob(blob=>{
+              if(!blob)return fail(new Error('Could not export 1024px PNG'));
+              if(finished)return;
+              finished=true;cleanup();
+              resolve({blob,previewUrl:URL.createObjectURL(blob),imageData:data,
+                score:msg.score,nearEdges:msg.nearEdges,samples:msg.samples});
+            },'image/png');
+          }catch(e){fail(e instanceof Error?e:new Error(String(e)));}
+        }
+      };
+      reset();
+      worker.postMessage({type:'align',width:rgba.width,height:rgba.height,
+        pixels:rgba.data.buffer,options},[rgba.data.buffer]);
+    });
   }
 }

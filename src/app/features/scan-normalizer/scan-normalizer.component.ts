@@ -1,141 +1,157 @@
 import { Component, inject, signal } from '@angular/core';
-import { ScanNormalizerService, QuarterTurn } from './scan-normalizer.service';
+import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions } from './scan-normalizer.service';
 
 @Component({
-  selector: 'app-scan-normalizer',
-  standalone: true,
-  template: `
-    <section class="sheet-orienter">
-      <h3>ORIENT KORA SCAN <span class="experimental">BETA</span></h3>
-      <p>Rotation only. We never move, cut, redraw or recolor the artwork.</p>
-      <label>Upload scanned PDF or image
-        <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp"
-          [disabled]="busy()" (change)="onFile($event)" />
+  selector:'app-scan-normalizer',
+  standalone:true,
+  template:`
+    <section class="normalizer">
+      <h3>SCAN → 1024×1024 TEMPLATE <small>BETA</small></h3>
+      <p>Correct the whole scanned sheet in one continuous image. No panel cuts, masking or recoloring.</p>
+      <label>Colored PDF or photo
+        <input type="file" accept=".pdf,application/pdf,image/*" [disabled]="busy()" (change)="load($event)">
       </label>
-      <p role="status" aria-live="polite" class="status">{{status()}}</p>
+      <p class="status" role="status" aria-live="polite">{{status()}}</p>
       @if (source()) {
-        <p class="selection">Detected orientation: {{rotation()}}° clockwise.
-          @if (confidence() === 'uncertain') {
-            <strong>Please confirm visually.</strong>
-          }
-        </p>
-        <label>Adjust rotation if necessary
-          <select [value]="rotation()" (change)="changeRotation($event)">
-            <option value="0">0° – unchanged</option>
+        <label>Printed sheet orientation
+          <select [value]="rotation()" (change)="setRotation($event)">
+            <option value="0">0°</option>
             <option value="90">90° clockwise</option>
             <option value="180">180°</option>
             <option value="270">90° counterclockwise</option>
           </select>
         </label>
-        <div class="preview">
-          <strong>Entire page preview — no cropping</strong>
-          <img [src]="previewUrl()" alt="Full KORA sheet with corrected rotation" />
-        </div>
-        <button type="button" [disabled]="busy()" (click)="download()">
-          {{busy() ? 'PREPARING FILE...' : 'DOWNLOAD ORIENTED ' + (isPdf() ? 'PDF' : 'PNG')}}
+        @if (!certain()) {
+          <p class="warning">Automatic QR orientation is a suggestion. Confirm that the printed KORA logo is upright.</p>
+        }
+        <button type="button" [disabled]="busy()" (click)="run(false)">
+          {{busy()?'ALIGNING PAGE...':'AUTO-ALIGN FULL SHEET'}}
         </button>
-        <p class="note">The original file remains unchanged. The PDF output rotates its
-          existing pages without redrawing their content. If the QR cannot be recognized,
-          choose the correct orientation above.</p>
+      }
+      @if (result(); as output) {
+        <div class="preview">
+          <strong>Exact output: 1024 × 1024 PNG</strong>
+          <img [src]="output.previewUrl" alt="Continuous full-sheet corrected KORA artwork">
+          <p class="quality">Reference outline score: {{output.nearEdges}} / {{output.samples}} nearby edges.
+          Check the printed logos and outer panels before export.</p>
+        </div>
+        <button type="button" (click)="download()">DOWNLOAD FULL TEXTURE PNG</button>
+        <details>
+          <summary>Fine alignment controls (no point selection)</summary>
+          <p>Adjust only if the printed outlines don't match the target layout.</p>
+          <label>Move horizontally {{shiftX()}} px
+            <input type="range" min="-80" max="80" step="1" [value]="shiftX()" (input)="change('shiftX',$event)">
+          </label>
+          <label>Move vertically {{shiftY()}} px
+            <input type="range" min="-80" max="80" step="1" [value]="shiftY()" (input)="change('shiftY',$event)">
+          </label>
+          <label>Width {{scaleX()}} %
+            <input type="range" min="85" max="115" step=".5" [value]="scaleX()" (input)="change('scaleX',$event)">
+          </label>
+          <label>Height {{scaleY()}} %
+            <input type="range" min="85" max="115" step=".5" [value]="scaleY()" (input)="change('scaleY',$event)">
+          </label>
+          <label>Fine rotation {{fineRotation()}}°
+            <input type="range" min="-7" max="7" step=".1" [value]="fineRotation()" (input)="change('fineRotation',$event)">
+          </label>
+          <div class="buttons">
+            <button type="button" [disabled]="busy()" (click)="run(true)">APPLY ADJUSTMENTS</button>
+            <button type="button" [disabled]="busy()" (click)="reset()">RESET</button>
+          </div>
+        </details>
       }
     </section>
   `,
-  styles: [`
-    .sheet-orienter {color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:14px;background:#101318;font-size:12px}
-    h3 {font-size:13px;color:#ef4444;margin:0 0 10px}
-    p {color:#aaa;line-height:1.5}
-    .experimental {font-size:10px;color:#fbbf24;margin-left:5px}
-    label {display:block;margin:12px 0;font-weight:600}
-    input,select {display:block;margin-top:6px;max-width:100%;font-size:12px}
-    select {background:#20242c;color:white;padding:7px;width:100%;border:1px solid #4b5563}
-    button {background:#b91c1c;color:white;border:0;padding:10px;border-radius:4px;font-weight:600;cursor:pointer}
-    button:disabled {opacity:.4;cursor:not-allowed}
-    .status {font-weight:600;color:#f9fafb;overflow-wrap:anywhere}
-    .selection strong {color:#fbbf24}
-    .preview {margin:12px 0}
-    .preview strong {display:block;margin-bottom:6px}
-    .preview img {width:100%;max-height:460px;object-fit:contain;background:#fff}
-    .note {font-size:11px}
+  styles:[`
+    .normalizer{color:#eee;background:#11151b;border:1px solid #404854;border-radius:8px;padding:14px;font-size:12px}
+    h3{font-size:13px;color:#ef4444;margin:0 0 8px}small{font-size:10px;color:#fbbf24}
+    p{color:#b6b6b6;line-height:1.5}label{display:block;margin:10px 0;font-weight:600}
+    input[type=file]{display:block;margin-top:6px;max-width:100%}
+    input[type=range]{display:block;width:100%}
+    select{background:#252b34;color:#fff;border:1px solid #58616e;padding:6px;margin-top:5px;width:100%}
+    button{padding:10px 9px;background:#b91c1c;color:#fff;border:0;border-radius:5px;font-weight:600;cursor:pointer}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .preview{margin:15px 0}.preview img{display:block;width:100%;background:#fff;margin:8px 0}
+    .warning{color:#fbbf24}.status{color:white;font-weight:600;overflow-wrap:anywhere}
+    details{margin-top:12px}summary{cursor:pointer;color:#ddd}.buttons{display:flex;gap:8px}
   `]
 })
 export class ScanNormalizerComponent {
-  private readonly processor = inject(ScanNormalizerService);
-  readonly source = signal<HTMLCanvasElement | null>(null);
-  readonly rotation = signal<QuarterTurn>(0);
-  readonly confidence = signal<'high' | 'uncertain'>('uncertain');
-  readonly status = signal('Upload the full KORA scan to detect its printed-sheet orientation.');
-  readonly busy = signal(false);
-  readonly isPdf = signal(false);
-  readonly previewUrl = signal('');
-  private file: File | null = null;
+  private readonly normalizer=inject(ScanNormalizerService);
+  readonly source=signal<HTMLCanvasElement|null>(null);
+  readonly result=signal<NormalizedPage|null>(null);
+  readonly busy=signal(false);
+  readonly status=signal('Choose a scanned KORA PDF or image.');
+  readonly rotation=signal<QuarterTurn>(0);
+  readonly certain=signal(false);
+  readonly shiftX=signal(0);
+  readonly shiftY=signal(0);
+  readonly scaleX=signal(100);
+  readonly scaleY=signal(100);
+  readonly fineRotation=signal(0);
 
-  async onFile(event: Event): Promise<void> {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file || this.busy()) return;
-    this.busy.set(true);
-    this.file = null;
-    this.source.set(null);
-    this.clearPreview();
-    this.status.set('Reading full sheet and locating printed QR code...');
-    try {
-      const canvas = await this.processor.preview(file);
-      const guess = await this.processor.detectOrientation(canvas);
-      this.file = file;
+  async load(event:Event):Promise<void>{
+    const file=(event.target as HTMLInputElement).files?.[0];
+    if(!file||this.busy())return;
+    this.busy.set(true);this.clear();this.source.set(null);
+    this.status.set('Reading scan...');
+    try{
+      const canvas=await this.normalizer.readFile(file);
+      const guess=await this.normalizer.guessRotation(canvas);
       this.source.set(canvas);
-      this.isPdf.set(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
       this.rotation.set(guess.rotation);
-      this.confidence.set(guess.confidence);
-      this.updatePreview();
-      this.status.set(guess.explanation);
-    } catch (error) {
-      this.status.set('Cannot open file: ' + String(error));
-    } finally {
-      this.busy.set(false);
-    }
+      this.certain.set(guess.certain);
+      this.status.set('Scan loaded. Orientation guess: '+guess.rotation+'°. Reviewing full-page geometry...');
+      await this.run(false,true);
+    }catch(error){
+      this.status.set('Scan failed: '+String(error));
+      console.error('[KORA scan]',error);
+    }finally{this.busy.set(false);}
   }
-
-  changeRotation(event: Event): void {
-    const value = Number((event.target as HTMLSelectElement).value);
-    if (value !== 0 && value !== 90 && value !== 180 && value !== 270) return;
-    this.rotation.set(value as QuarterTurn);
-    this.confidence.set('high');
-    this.status.set('Rotation selected manually. Confirm the QR is at bottom-left before downloading.');
-    this.updatePreview();
+  setRotation(event:Event):void{
+    this.rotation.set(Number((event.target as HTMLSelectElement).value) as QuarterTurn);
+    this.certain.set(true);
+    this.clear();
+    this.status.set('New orientation selected. Click Auto-align full sheet.');
   }
-
-  private clearPreview(): void {
-    const previous = this.previewUrl();
-    if (previous) URL.revokeObjectURL(previous);
-    this.previewUrl.set('');
+  change(key:'shiftX'|'shiftY'|'scaleX'|'scaleY'|'fineRotation',event:Event):void{
+    this[key].set(Number((event.target as HTMLInputElement).value));
   }
-
-  private updatePreview(): void {
-    const source = this.source();
-    if (!source) return;
-    const oriented = this.processor.rotatePreview(source, this.rotation());
-    oriented.toBlob(blob => {
-      if (!blob) return;
-      this.clearPreview();
-      this.previewUrl.set(URL.createObjectURL(blob));
-    }, 'image/png');
+  private opts():RegistrationOptions{
+    return {rotation:this.rotation(),shiftX:this.shiftX(),shiftY:this.shiftY(),
+      scaleX:this.scaleX()/100,scaleY:this.scaleY()/100,fineRotation:this.fineRotation()};
   }
-
-  async download(): Promise<void> {
-    if (!this.file || !this.source() || this.busy()) return;
-    this.busy.set(true);
-    this.status.set('Preparing full-page file with rotation only...');
-    try {
-      const blob = await this.processor.exportFile(this.file, this.rotation(), this.source()!);
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      const stem = this.file.name.replace(/\.[^.]+$/, '');
-      link.href = url;
-      link.download = stem + '-oriented.' + (this.isPdf() ? 'pdf' : 'png');
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      this.status.set('Oriented file prepared. Original artwork and page layout preserved.');
-    } catch (error) {
-      this.status.set('Download failed: ' + String(error));
-    } finally { this.busy.set(false); }
+  async run(manual=false,alreadyBusy=false):Promise<void>{
+    const scan=this.source();
+    if(!scan||(!alreadyBusy&&this.busy()))return;
+    this.busy.set(true);this.clear();
+    this.status.set('Registering one continuous page...');
+    try{
+      const response=await this.normalizer.normalize(scan,{...this.opts(),manual} as RegistrationOptions,
+        status=>this.status.set(status));
+      this.result.set(response);
+      this.status.set('Created 1024×1024 continuous image. Verify panel positions before download.');
+    }catch(error){
+      this.status.set('Alignment failed: '+String(error));
+      console.error('[KORA full-page alignment]',error);
+    }finally{this.busy.set(false);}
+  }
+  reset():void{
+    this.shiftX.set(0);this.shiftY.set(0);this.scaleX.set(100);
+    this.scaleY.set(100);this.fineRotation.set(0);
+    void this.run(false);
+  }
+  download():void{
+    const output=this.result();
+    if(!output)return;
+    const anchor=document.createElement('a');
+    anchor.href=output.previewUrl;
+    anchor.download='kora-sheet-aligned-1024.png';
+    anchor.click();
+  }
+  private clear():void{
+    const old=this.result();
+    if(old)URL.revokeObjectURL(old.previewUrl);
+    this.result.set(null);
   }
 }
