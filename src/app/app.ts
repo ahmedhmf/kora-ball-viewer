@@ -6,6 +6,7 @@ import { AuthService } from './services/auth.service';
 import { BallVisualizerStore } from './store/ball-visualizer.store';
 import { DropZoneComponent } from './components/drop-zone/drop-zone.component';
 import { ControlsPanelComponent } from './components/controls-panel/controls-panel.component';
+import { ScanNormalizerComponent } from './features/scan-normalizer/scan-normalizer.component';
 import { LockScreenComponent } from './components/lock-screen/lock-screen.component';
 
 @Component({
@@ -16,6 +17,7 @@ import { LockScreenComponent } from './components/lock-screen/lock-screen.compon
     DropZoneComponent,
     ControlsPanelComponent,
     LockScreenComponent,
+    ScanNormalizerComponent,
   ],
   templateUrl: './app.html',
   styleUrl: './app.scss',
