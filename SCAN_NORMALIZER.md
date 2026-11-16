@@ -1,27 +1,25 @@
-# KORA scan normalizer — experimental panel-by-panel registration
+# KORA scan orientation only
 
-## Verification status
-The **latest upside-down WhatsApp PDF** and supplied original blank/reference texture were examined in an offline Python/OpenCV prototype. A local 32-panel fit gives a visibly better but **still imperfect** result. The browser algorithm below was ported to the web worker and has **not yet passed an end-to-end browser run**; do not merge until visually checked.
+**Scope:** Correct the rotation of the complete printed sheet. This feature does NOT align the artwork to the 3D UV map, mask panels, recolor, crop, or modify individual drawings.
 
-## Method
-1. Determine the printed sheet's 0°/180° orientation using the QR position.
-2. Normalize scan height to 1024 logical pixels while preserving the original full-resolution pixels for final sampling.
-3. Estimate edge-distance maps in pure JavaScript (no OpenCV, no JSFeat, no WASM).
-4. Fit each of the 32 known printed panel outlines independently using bounded local translation and X/Y scale.
-5. Transfer child-painted pixels into the fixed 1024×1024 KORA layout with 4px edge margin.
-6. Refuse export if too many panels have poor local confidence.
+- Accept PDF, JPG, PNG and WEBP with one upload.
+- Auto-detect KORA's printed QR-code corner: bottom-left is canonical.
+- Use native browser BarcodeDetector when supported; fallback QR-density heuristic is marked uncertain.
+- Show an entire-page preview with manual 0°, 90°, 180°, 270° selection.
+- PDF export uses pdf-lib to change only page rotation metadata. Embedded scan images or vector drawing contents are not re-rendered or resampled. PDF save still produces a new PDF file.
+- Image export uses a lossless PNG with full resolution and 90° rotation only.
+- No OpenCV, JSFeat, or local AI model needed.
 
-**Calibration caveat:** The scan initialization and target UV transform are calibrated to the exact user-provided printable sheet and master texture. Other revisions, significantly different phone framing, or strong perspective distortions may still fail or produce bad results. Output requires visual inspection.
-
-## Test
+## Local test
 ```bash
 git switch feature/browser-scan-normalizer
-git pull
+git pull origin feature/browser-scan-normalizer
 npm install
 npm start
 ```
-Upload the three known files: child scan PDF, blank KORA print PDF, exact 1024 master JPG. The worker should show QR orientation and a count of aligned panels.
 
-The child's handwriting may be naturally upside down relative to the printed sheet; it is intentionally not rotated independently.
+Use the upside-down `WhatsApp Scan 2026-09-25 at 21.25.58.pdf`. The printed QR on that sample is at top-right, so the intended correction is **180° clockwise**. Verify the entire preview, then download an oriented PDF. If detection confidence is uncertain, inspect and select the correct angle manually.
 
-The feature is a draft PR and should remain unmerged until tested in a real browser.
+**Important:** Rotating a printed sheet is NOT sufficient to map it to the 1024×1024 UV texture or to remove scanner perspective distortion. The current UI intentionally does not offer the previous broken "render on ball" export. A distinct texture-mapping feature would need separate validated work.
+
+**Multi-page PDFs:** The selected angle is applied to every page. For PDFs whose pages have mixed orientations, split the file or correct pages individually.

@@ -1,430 +1,204 @@
 import { Injectable } from '@angular/core';
+import { PDFDocument, degrees } from 'pdf-lib';
 
-export interface RegistrationResult {
-  blob: Blob;
-  previewUrl: string;
-  inliers: number;
-  matches: number;
-  method: 'automatic' | 'manual' | 'estimated';
-}
+export type QuarterTurn = 0 | 90 | 180 | 270;
+export type OrientationGuess = {
+  rotation: QuarterTurn;
+  confidence: 'high' | 'uncertain';
+  explanation: string;
+};
 
-/**
- * All image and PDF processing is performed in the browser.
- * External libraries are loaded on demand; no document is sent to a server.
- * For production, vendor these two scripts under /public/vendor/ and update the URLs.
- */
 @Injectable({ providedIn: 'root' })
 export class ScanNormalizerService {
   private pdfPromise?: Promise<any>;
-  private cvPromise?: Promise<any>;
   private readonly pdfUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   private readonly pdfWorkerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  private readonly cvUrl = 'https://docs.opencv.org/4.x/opencv.js';
 
-  private script(url: string): Promise<void> {
+  private loadScript(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const element = document.createElement('script');
-      element.src = url;
-      element.async = true;
-      let finished = false;
-      const finish = (error?: Error) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timeout);
-        if (error) {
-          element.remove();
-          reject(error);
-        } else resolve();
-      };
-      const timeout = setTimeout(
-        () => finish(new Error('Timed out loading ' + url + '. Check connection or content blockers.')), 25000
-      );
-      element.onload = () => finish();
-      element.onerror = () => finish(new Error('Could not load ' + url));
-      document.head.append(element);
+      const script = document.createElement('script');
+      const timer = window.setTimeout(() => reject(new Error('Timed out loading PDF reader')), 25000);
+      script.async = true;
+      script.src = url;
+      script.onload = () => { clearTimeout(timer); resolve(); };
+      script.onerror = () => { clearTimeout(timer); reject(new Error('Cannot load the PDF reader')); };
+      document.head.append(script);
     });
   }
 
-  private async pdf(): Promise<any> {
+  private pdfjs(): Promise<any> {
     return this.pdfPromise ??= (async () => {
-      if (!(window as any).pdfjsLib) await this.script(this.pdfUrl);
+      if (!(window as any).pdfjsLib) await this.loadScript(this.pdfUrl);
       const pdf = (window as any).pdfjsLib;
+      if (!pdf) throw new Error('PDF.js is unavailable');
       pdf.GlobalWorkerOptions.workerSrc = this.pdfWorkerUrl;
       return pdf;
     })().catch((error: unknown) => { this.pdfPromise = undefined; throw error; });
   }
 
-  private async cv(): Promise<any> {
-    return this.cvPromise ??= (async () => {
-      if (!(window as any).cv) await this.script(this.cvUrl);
-      let cv = (window as any).cv;
-      if (typeof cv?.then === 'function') {
-        cv = await Promise.race([
-          cv,
-          new Promise<never>((_, reject) => setTimeout(
-            () => reject(new Error('OpenCV startup timed out. Try reloading the page.')), 25000)),
-        ]);
-      }
-      if (typeof cv?.getPerspectiveTransform !== 'function') {
-        await new Promise<void>((resolve, reject) => {
-          const start = Date.now();
-          const check = () => {
-            if (typeof (window as any).cv?.getPerspectiveTransform === 'function') resolve();
-            else if (Date.now() - start > 15000) reject(new Error('OpenCV initialization timed out'));
-            else setTimeout(check, 100);
-          };
-          check();
-        });
-        cv = (window as any).cv;
-        if (typeof cv?.then === 'function') cv = await cv;
-      }
-      if (typeof cv?.getPerspectiveTransform !== 'function')
-        throw new Error('OpenCV loaded but its image-processing API is unavailable');
-      return cv;
-    })().catch((error: unknown) => { this.cvPromise = undefined; throw error; });
-  }
-
-  async readFile(file: File): Promise<HTMLCanvasElement> {
-    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-      const pdfjs = await this.pdf();
-      const buffer = await file.arrayBuffer();
-      const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  async preview(file: File): Promise<HTMLCanvasElement> {
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf && !file.type.startsWith('image/'))
+      throw new Error('Choose a PDF, JPG, PNG or WEBP file.');
+    if (isPdf) {
+      const pdf = await this.pdfjs();
+      const doc = await pdf.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
       try {
         const page = await doc.getPage(1);
-        // WhatsApp scanner PDFs sometimes encode pages at thousands of points.
-        // Rendering those at 2× can allocate hundreds of MB and stall the worker.
-        // The 1800px cap is sufficient for a 1024px output texture.
-        const native = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, 1800 / Math.max(native.width, native.height));
+        const original = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 1600 / Math.max(original.width, original.height));
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
-        const context = canvas.getContext('2d', { willReadFrequently: true })!;
-        await page.render({ canvasContext: context, viewport }).promise;
+        await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
         return canvas;
       } finally {
         await doc.destroy();
       }
     }
-    if (!file.type.startsWith('image/')) throw new Error('Please select a PDF or image');
     const bitmap = await createImageBitmap(file);
     try {
       const canvas = document.createElement('canvas');
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
-      canvas.getContext('2d', { willReadFrequently: true })!.drawImage(bitmap, 0, 0);
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
       return canvas;
-    } finally {
-      bitmap.close();
-    }
+    } finally { bitmap.close(); }
   }
-
-  /** Four ordered corresponding source/target points, in original pixel coordinates. */
-  async register(
-    scan: HTMLCanvasElement,
-    master: HTMLCanvasElement,
-    points?: { scan: [number, number][]; master: [number, number][] },
-  ): Promise<RegistrationResult> {
-    const cv = await this.cv();
-    const destination = document.createElement('canvas');
-    destination.width = 1024;
-    destination.height = 1024;
-    const normalizedMaster = document.createElement('canvas');
-    normalizedMaster.width = 1024;
-    normalizedMaster.height = 1024;
-    normalizedMaster.getContext('2d')!.drawImage(master, 0, 0, 1024, 1024);
-
-    const sourceMat = cv.imread(scan);
-    const output = new cv.Mat();
-    let transform: any;
-    let inliers = 0, matches = 0;
-    let method: RegistrationResult['method'] = 'manual';
-    try {
-      if (points) {
-        if (points.scan.length !== 4 || points.master.length !== 4)
-          throw new Error('Select exactly four matching points in each image');
-        const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, points.scan.flat());
-        const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2,
-          points.master.flatMap(([x, y]) => [x * 1024 / master.width, y * 1024 / master.height]));
-        try { transform = cv.getPerspectiveTransform(srcPts, dstPts); }
-        finally { srcPts.delete(); dstPts.delete(); }
-      } else {
-        const found = this.findAutomaticTransform(cv, scan, normalizedMaster);
-        if (found) {
-          transform = found.transform;
-          inliers = found.inliers;
-          matches = found.matches;
-          method = 'automatic';
-        } else {
-          // Approximation only: cannot be treated as a validated registration.
-          // User can click four identical panel corners to refine it.
-          transform = this.estimateInitialTransform(cv, scan, normalizedMaster);
-          method = 'estimated';
-        }
-      }
-      cv.warpPerspective(sourceMat, output, transform, new cv.Size(1024, 1024),
-        cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
-      cv.imshow(destination, output);
-      const blob = await new Promise<Blob>((resolve, reject) =>
-        destination.toBlob(b => b ? resolve(b) : reject(new Error('PNG generation failed')), 'image/png'));
-      return { blob, previewUrl: URL.createObjectURL(blob), inliers, matches, method };
-    } finally {
-      sourceMat.delete(); output.delete(); transform?.delete();
-    }
-  }
-
 
   /**
-   * Deterministic two-stage registration:
-   * blank print sheet -> child's scan, blank print sheet -> UV master.
-   * Child artwork is never compared directly with a different colored design.
+   * The printed KORA sheet contains a QR code at bottom-left.
+   * Unlike handwritten words, this is an invariant orientation anchor.
+   * A missing/ambiguous QR is not permission to guess.
    */
-  /**
-   * Run CPU-heavy OpenCV in a dedicated worker. A watchdog can terminate a stuck
-   * WebAssembly operation without freezing Angular or permanently disabling the UI.
-   */
-  async registerWithBlank(
-    scan: HTMLCanvasElement,
-    blank: HTMLCanvasElement,
-    master: HTMLCanvasElement,
-    reportProgress: (message: string) => void = () => {},
-  ): Promise<RegistrationResult & { panels: number; scanInliers: number; masterInliers: number }> {
-    const image = (canvas: HTMLCanvasElement): ImageData =>
-      canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
-    reportProgress('Preparing images for background processing...');
-    const scanData = image(scan), blankData = image(blank), masterData = image(master);
-    const worker = new Worker('/workers/kora-scan-worker.js?v=11');
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
-      let lastStage = 'Starting worker';
-      const startedAt = Date.now();
-      const cleanup = () => {
-        if (watchdog) clearTimeout(watchdog);
-        worker.terminate();
-      };
-      const finish = (error?: Error, result?: RegistrationResult & {
-        panels: number; scanInliers: number; masterInliers: number;
-      }) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (error) reject(error);
-        else resolve(result!);
-      };
-      const resetWatchdog = () => {
-        if (watchdog) clearTimeout(watchdog);
-        watchdog = setTimeout(() => finish(new Error(
-          'Worker stopped at: ' + lastStage + ' (' + Math.round((Date.now() - startedAt) / 1000) + 's). ' +
-          'Check OpenCV loading if this is a startup stage; otherwise try a smaller scan.'
-        )), 45000);
-      };
-      worker.onerror = (event) => {
-        finish(new Error('Background scan worker failed: ' + (event.message || 'unknown error')));
-      };
-      worker.onmessage = (event: MessageEvent) => {
-        const msg = event.data;
-        if (msg?.type === 'progress') {
-          lastStage = String(msg.message);
-          reportProgress(lastStage);
-          resetWatchdog();
-        } else if (msg?.type === 'error') {
-          finish(new Error(msg.message || 'Background processing failed'));
-        } else if (msg?.type === 'complete') {
-          try {
-            const pixels = new ImageData(new Uint8ClampedArray(msg.pixels), 1024, 1024);
-            const canvas = document.createElement('canvas');
-            canvas.width = 1024; canvas.height = 1024;
-            canvas.getContext('2d')!.putImageData(pixels, 0, 0);
-            canvas.toBlob((blob) => {
-              if (!blob) return finish(new Error('Could not export PNG'));
-              finish(undefined, {
-                blob, previewUrl: URL.createObjectURL(blob), method: 'automatic',
-                inliers: msg.scanInliers + msg.masterInliers,
-                matches: msg.scanMatches + msg.masterMatches,
-                panels: msg.panels, scanInliers: msg.scanInliers, masterInliers: msg.masterInliers,
-              });
-            }, 'image/png');
-          } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
-        }
-      };
-      resetWatchdog();
+  async detectOrientation(canvas: HTMLCanvasElement): Promise<OrientationGuess> {
+    const BarcodeDetector = (window as any).BarcodeDetector;
+    if (typeof BarcodeDetector === 'function') {
       try {
-        worker.postMessage({
-          type: 'normalize',
-          scan: { width: scanData.width, height: scanData.height, pixels: scanData.data.buffer },
-          blank: { width: blankData.width, height: blankData.height, pixels: blankData.data.buffer },
-          master: { width: masterData.width, height: masterData.height, pixels: masterData.data.buffer },
-        }, [scanData.data.buffer, blankData.data.buffer, masterData.data.buffer]);
-      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
-    });
+        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        const codes: any[] = await detector.detect(canvas);
+        if (codes.length === 1) {
+          const box = codes[0].boundingBox;
+          const x = (box.x + box.width / 2) / canvas.width;
+          const y = (box.y + box.height / 2) / canvas.height;
+          const corner = this.corner(x, y);
+          if (corner) return {
+            rotation: this.turnForCorner(corner),
+            confidence: 'high',
+            explanation: 'Printed QR code detected at ' + corner + '.'
+          };
+        }
+      } catch { /* Fallback to QR-like corner analysis below. */ }
+    }
+
+    const result = this.detectQrDensity(canvas);
+    if (result) return result;
+    return {
+      rotation: 0,
+      confidence: 'uncertain',
+      explanation: 'Could not reliably identify the printed QR code. Choose the correct rotation using the preview.'
+    };
   }
 
-  private matchReference(cv: any, reference: HTMLCanvasElement, target: HTMLCanvasElement):
-      { h: any; inliers: number; total: number } {
-    // Match on smaller canvases to avoid freezing the browser on scanned 2K-4K PDF pages.
-    // Scale detected keypoint positions back to original pixel coordinates for homography.
-    const maxDimension = 1100;
-    const prepared = (image: HTMLCanvasElement) => {
-      const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
-      return { canvas, scaleX: image.width / canvas.width, scaleY: image.height / canvas.height };
-    };
-    const ref = prepared(reference), tgt = prepared(target);
-    const a = cv.imread(ref.canvas), b = cv.imread(tgt.canvas);
-    const ag = new cv.Mat(), bg = new cv.Mat();
-    const k1 = new cv.KeyPointVector(), k2 = new cv.KeyPointVector();
-    const d1 = new cv.Mat(), d2 = new cv.Mat();
-    const matches = new cv.DMatchVectorVector();
-    const emptyMask = new cv.Mat();
-    let orb: any, matcher: any;
-    try {
-      cv.cvtColor(a, ag, cv.COLOR_RGBA2GRAY);
-      cv.cvtColor(b, bg, cv.COLOR_RGBA2GRAY);
-      orb = new cv.ORB(1800);
-      orb.detectAndCompute(ag, emptyMask, k1, d1);
-      orb.detectAndCompute(bg, emptyMask, k2, d2);
-      if (d1.empty() || d2.empty()) throw new Error('Not enough recognizable features');
-      matcher = new cv.BFMatcher(cv.NORM_HAMMING, false);
-      matcher.knnMatch(d1, d2, matches, 2);
-      const sourcePoints: number[] = [], targetPoints: number[] = [];
-      for (let i = 0; i < matches.size(); i++) {
-        const pair = matches.get(i);
-        try {
-          if (pair.size() < 2) continue;
-          const best = pair.get(0), next = pair.get(1);
-          if (best.distance >= 0.70 * next.distance) continue;
-          const from = k1.get(best.queryIdx).pt, to = k2.get(best.trainIdx).pt;
-          sourcePoints.push(from.x * ref.scaleX, from.y * ref.scaleY);
-          targetPoints.push(to.x * tgt.scaleX, to.y * tgt.scaleY);
-        } finally { pair.delete(); }
-      }
-      const count = sourcePoints.length / 2;
-      if (count < 18) throw new Error('Too few matching outlines; check the blank sheet and scan.');
-      const src = cv.matFromArray(count, 1, cv.CV_32FC2, sourcePoints);
-      const dst = cv.matFromArray(count, 1, cv.CV_32FC2, targetPoints);
-      const inlierMask = new cv.Mat();
-      try {
-        const h = cv.findHomography(src, dst, cv.RANSAC, 5, inlierMask);
-        const inliers = cv.countNonZero(inlierMask);
-        if (h.empty() || inliers < 12 || inliers / count < 0.24) {
-          h.delete();
-          throw new Error('Low-confidence template matching; try a clearer scan.');
-        }
-        const corners = cv.matFromArray(4, 1, cv.CV_32FC2,
-          [0, 0, reference.width, 0, reference.width, reference.height, 0, reference.height]);
-        const warped = new cv.Mat();
-        try {
-          cv.perspectiveTransform(corners, warped, h);
-          for (let i = 0; i < 4; i++) {
-            const x = warped.data32F[i * 2], y = warped.data32F[i * 2 + 1];
-            if (!Number.isFinite(x) || !Number.isFinite(y) ||
-                x < -target.width * 0.7 || y < -target.height * 0.7 ||
-                x > target.width * 1.7 || y > target.height * 1.7) {
-              h.delete();
-              throw new Error('Alignment distortion is too large');
-            }
-          }
-        } finally { corners.delete(); warped.delete(); }
-        return { h, inliers, total: count };
-      } finally { src.delete(); dst.delete(); inlierMask.delete(); }
-    } finally {
-      a.delete(); b.delete(); ag.delete(); bg.delete();
-      k1.delete(); k2.delete(); d1.delete(); d2.delete(); matches.delete(); emptyMask.delete();
-      orb?.delete(); matcher?.delete();
+  private corner(x: number, y: number): string | null {
+    if (x < .36 && y < .36) return 'top-left';
+    if (x > .64 && y < .36) return 'top-right';
+    if (x < .36 && y > .64) return 'bottom-left';
+    if (x > .64 && y > .64) return 'bottom-right';
+    return null;
+  }
+
+  private turnForCorner(corner: string): QuarterTurn {
+    // Rotation applied clockwise to place the QR code at bottom-left.
+    switch (corner) {
+      case 'top-right': return 180;
+      case 'top-left': return 270;
+      case 'bottom-right': return 90;
+      default: return 0;
     }
   }
 
-  private findAutomaticTransform(cv: any, scan: HTMLCanvasElement, master: HTMLCanvasElement):
-      { transform: any; inliers: number; matches: number } | null {
-    // Use a coarse-to-fine keypoint registration. Never accept a weak homography.
-    const maxWidth = 1500;
-    const scanScale = Math.min(1, maxWidth / Math.max(scan.width, scan.height));
-    const scaled = document.createElement('canvas');
-    scaled.width = Math.round(scan.width * scanScale);
-    scaled.height = Math.round(scan.height * scanScale);
-    scaled.getContext('2d')!.drawImage(scan, 0, 0, scaled.width, scaled.height);
-    const src = cv.imread(scaled), dst = cv.imread(master);
-    const srcGray = new cv.Mat(), dstGray = new cv.Mat();
-    const kp1 = new cv.KeyPointVector(), kp2 = new cv.KeyPointVector();
-    const descriptors1 = new cv.Mat(), descriptors2 = new cv.Mat();
-    let orb: any, matcher: any, neighborMatches: any;
-    try {
-      cv.cvtColor(src, srcGray, cv.COLOR_RGBA2GRAY);
-      cv.cvtColor(dst, dstGray, cv.COLOR_RGBA2GRAY);
-      cv.equalizeHist(srcGray, srcGray);
-      cv.equalizeHist(dstGray, dstGray);
-      orb = new cv.ORB(2200);
-      orb.detectAndCompute(srcGray, new cv.Mat(), kp1, descriptors1);
-      orb.detectAndCompute(dstGray, new cv.Mat(), kp2, descriptors2);
-      if (descriptors1.empty() || descriptors2.empty()) return null;
-      matcher = new cv.BFMatcher(cv.NORM_HAMMING, false);
-      neighborMatches = new cv.DMatchVectorVector();
-      matcher.knnMatch(descriptors1, descriptors2, neighborMatches, 2);
-      const scanPoints: number[] = [], masterPoints: number[] = [];
-      for (let i = 0; i < neighborMatches.size(); i++) {
-        const neighbors = neighborMatches.get(i);
-        try {
-          if (neighbors.size() < 2) continue;
-          const a = neighbors.get(0), b = neighbors.get(1);
-          if (a.distance >= 0.70 * b.distance) continue;
-          const p = kp1.get(a.queryIdx).pt, q = kp2.get(a.trainIdx).pt;
-          scanPoints.push(p.x / scanScale, p.y / scanScale);
-          masterPoints.push(q.x, q.y);
-        } finally { neighbors.delete(); }
-      }
-      if (scanPoints.length < 18) return null;
-      const s = cv.matFromArray(scanPoints.length / 2, 1, cv.CV_32FC2, scanPoints);
-      const d = cv.matFromArray(masterPoints.length / 2, 1, cv.CV_32FC2, masterPoints);
-      const mask = new cv.Mat();
-      try {
-        const homography = cv.findHomography(s, d, cv.RANSAC, 4, mask);
-        const inliers = cv.countNonZero(mask);
-        if (homography.empty() || inliers < 18 || inliers / scanPoints.length < 0.48) {
-          homography.delete();
-          return null;
-        }
-        return { transform: homography, inliers, matches: scanPoints.length };
-      } finally { s.delete(); d.delete(); mask.delete(); }
-    } catch (error) {
-      console.warn('Automatic feature registration failed, using editable estimate:', error);
-      return null;
-    } finally {
-      src.delete(); dst.delete(); srcGray.delete(); dstGray.delete();
-      kp1.delete(); kp2.delete(); descriptors1.delete(); descriptors2.delete();
-      orb?.delete(); matcher?.delete(); neighborMatches?.delete();
+  private detectQrDensity(canvas: HTMLCanvasElement): OrientationGuess | null {
+    const w = 320, h = Math.max(1, Math.round(320 * canvas.height / canvas.width));
+    const temp = document.createElement('canvas');
+    temp.width = w; temp.height = h;
+    const ctx = temp.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < gray.length; i++)
+      gray[i] = (.299 * data[4*i] + .587 * data[4*i+1] + .114 * data[4*i+2]) | 0;
+    const dense = new Uint8Array(w * h);
+    for (let y = 1; y < h-1; y++) for (let x = 1; x < w-1; x++) {
+      const i = y*w+x;
+      if (Math.abs(gray[i-1]-gray[i+1]) > 25 &&
+          Math.abs(gray[i-w]-gray[i+w]) > 25) dense[i] = 1;
     }
+    const ii = new Uint32Array((w+1)*(h+1));
+    for (let y = 0; y < h; y++) {
+      let row = 0;
+      for (let x = 0; x < w; x++) {
+        row += dense[y*w+x];
+        ii[(y+1)*(w+1)+x+1] = ii[y*(w+1)+x+1]+row;
+      }
+    }
+    const block = Math.max(12, Math.round(Math.min(w,h) * .065));
+    const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+    const scores = corners.map(corner => {
+      const right = corner.includes('right'), bottom = corner.includes('bottom');
+      const x0 = right ? Math.floor(.65*w) : 0;
+      const x1 = right ? w : Math.floor(.35*w);
+      const y0 = bottom ? Math.floor(.65*h) : 0;
+      const y1 = bottom ? h : Math.floor(.35*h);
+      let best = 0;
+      for (let y = y0; y <= y1-block; y += 2)
+        for (let x = x0; x <= x1-block; x += 2) {
+          const x2=x+block,y2=y+block;
+          const count=ii[y2*(w+1)+x2]-ii[y*(w+1)+x2]-
+            ii[y2*(w+1)+x]+ii[y*(w+1)+x];
+          if(count > best)best=count;
+        }
+      return { corner, score: best };
+    }).sort((a,b) => b.score - a.score);
+    const [first, second] = scores;
+    // Heuristic density is not a full QR decoder; only offer a suggestion.
+    if (first.score < 10 || first.score < second.score * 1.35) return null;
+    return {
+      rotation: this.turnForCorner(first.corner),
+      confidence: 'uncertain',
+      explanation: 'Possible QR code at ' + first.corner +
+        '. Please verify the page preview before exporting.'
+    };
   }
 
-  private estimateInitialTransform(cv: any, scan: HTMLCanvasElement, master: HTMLCanvasElement): any {
-    // Estimate ink extents in the central part of each sheet. Excludes most page margins.
-    // It is deliberately flagged as ESTIMATED, not verified.
-    const extent = (canvas: HTMLCanvasElement, cutoff: number) => {
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      const { width: w, height: h } = canvas;
-      const data = ctx.getImageData(0, 0, w, h).data;
-      const row: number[] = Array(h).fill(0), col: number[] = Array(w).fill(0);
-      for (let y = Math.floor(h * .04); y < h * .94; y += 2) {
-        for (let x = Math.floor(w * .08); x < w * .92; x += 2) {
-          const i = (y * w + x) * 4;
-          if (Math.min(data[i], data[i + 1], data[i + 2]) < cutoff) { row[y]++; col[x]++; }
-        }
+  rotatePreview(canvas: HTMLCanvasElement, degreesClockwise: QuarterTurn): HTMLCanvasElement {
+    const sideways = degreesClockwise === 90 || degreesClockwise === 270;
+    const result = document.createElement('canvas');
+    result.width = sideways ? canvas.height : canvas.width;
+    result.height = sideways ? canvas.width : canvas.height;
+    const ctx = result.getContext('2d')!;
+    ctx.translate(result.width / 2, result.height / 2);
+    ctx.rotate(degreesClockwise * Math.PI / 180);
+    ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+    return result;
+  }
+
+  async exportFile(file: File, angle: QuarterTurn, source: HTMLCanvasElement): Promise<Blob> {
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      // Set PDF page rotation metadata, preserving the actual drawings, vectors,
+      // embedded scan image and page contents; no rasterization or cropping.
+      const document = await PDFDocument.load(await file.arrayBuffer());
+      for (const page of document.getPages()) {
+        const existing = page.getRotation().angle;
+        page.setRotation(degrees((((existing + angle) % 360) + 360) % 360));
       }
-      const activeX = col.map((v, i) => v > 2 ? i : -1).filter(v => v >= 0);
-      const activeY = row.map((v, i) => v > 2 ? i : -1).filter(v => v >= 0);
-      if (!activeX.length || !activeY.length) throw new Error('Could not find artwork');
-      return [Math.min(...activeX), Math.min(...activeY), Math.max(...activeX), Math.max(...activeY)];
-    };
-    const a = extent(scan, 140), b = extent(master, 140);
-    const src = cv.matFromArray(4, 1, cv.CV_32FC2,
-      [a[0],a[1], a[2],a[1], a[2],a[3], a[0],a[3]]);
-    const dst = cv.matFromArray(4, 1, cv.CV_32FC2,
-      [b[0],b[1], b[2],b[1], b[2],b[3], b[0],b[3]]);
-    try { return cv.getPerspectiveTransform(src, dst); }
-    finally { src.delete(); dst.delete(); }
+      const bytes = await document.save();
+      return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+    }
+    const result = this.rotatePreview(source, angle);
+    return new Promise((resolve, reject) => result.toBlob(
+      blob => blob ? resolve(blob) : reject(new Error('PNG export failed')), 'image/png'
+    ));
   }
 }
