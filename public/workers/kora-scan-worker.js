@@ -64,70 +64,89 @@ const POINTS=boundarySamples();
 function fitSheet(blank,target,label) {
   const img=grayImage(target),dist=edgeDistance(img);
   const w=target.width,h=target.height;
-  const fromWidth=blank.width,fromHeight=blank.height;
-  // Coordinates use the 725x1024 canonical print reference; scale to actual PDF raster.
-  const sx0=w/fromWidth,sy0=h/fromHeight;
-  const master=w/h>.86;
-  const fitScale=master?(h/1024)*1.045:(h/fromHeight);
-  const initial=[w*.5, h*.5, fitScale, fitScale, 0];
-  const score = (p,quality=false) => {
+  const isTexture=label==='Texture';
+  // The 32 panel polygons are defined in a *fixed 725x1024 coordinate system*.
+  // Never divide scale by the uploaded blank PDF raster height: PDF.js may render
+  // it at any device resolution, producing an incorrect fitted zoom.
+  //
+  // Scan input can be rotated by 0/90/180/270 degrees by WhatsApp scanners.
+  // The canonical texture has one fixed upright orientation and is never rotated.
+  const angles=isTexture?[0]:[0,Math.PI/2,Math.PI,-Math.PI/2];
+  const score=(p,detailed=false)=>{
     const [cx,cy,sx,sy,angle]=p;
-    const cos=Math.cos(angle),sin=Math.sin(angle);
-    let error=0,good=0,valid=0;
-    const stride=quality?1:2;
+    const cs=Math.cos(angle),sn=Math.sin(angle);
+    const stride=detailed?1:2;
+    const bands=new Uint16Array(8);
+    const totals=new Uint16Array(8);
+    let error=0,good=0,valid=0,total=0;
     for(let i=0;i<POINTS.length;i+=stride){
-      // Reference dimensions may differ from a 725x1024 pre-render.
       const xx=POINTS[i][0],yy=POINTS[i][1];
-      const x=(cx+sx*(xx*cos-yy*sin))*img.ratioX;
-      const y=(cy+sy*(xx*sin+yy*cos))*img.ratioY;
+      const x=(cx+sx*(xx*cs-yy*sn))*img.ratioX;
+      const y=(cy+sy*(xx*sn+yy*cs))*img.ratioY;
       const ix=Math.round(x),iy=Math.round(y);
-      let d=30;
-      if(ix>=0&&iy>=0&&ix<img.width&&iy<img.height){
+      let d=20;
+      if(ix>=1&&iy>=1&&ix<img.width-1&&iy<img.height-1){
         valid++;
         d=dist[iy*img.width+ix]/3;
-        if(d<3)good++;
       }
-      error+=Math.min(14,d);
+      const band=Math.min(7,Math.max(0,Math.floor((yy+512)/128)));
+      totals[band]++;
+      if(d<2.8){good++;bands[band]++;}
+      error+=Math.min(12,d);
+      total++;
     }
-    const avg=error/Math.ceil(POINTS.length/stride);
-    if(quality)return {avg,good,valid,count:Math.ceil(POINTS.length/stride)};
-    const regularization=.5*Math.abs(sx-fitScale)+.5*Math.abs(sy-fitScale)+
-      .01*(Math.abs(cx-w*.5)+Math.abs(cy-h*.5));
-    return avg+regularization;
+    if(detailed){
+      const covered=Array.from(bands).filter((n,i)=>totals[i]>0&&n/totals[i]>.16).length;
+      return {avg:error/total,good,valid,count:total,bands:covered};
+    }
+    return error/total;
   };
-  // Multi-start coordinate descent. No feature descriptors or WebAssembly needed.
-  let best=initial.slice(),bestScore=score(best);
-  const seeds=master
-    ? [[w*.49,h*.50,fitScale,fitScale,0],[w*.51,h*.52,fitScale,fitScale,0]]
-    : [[w*.50,h*.50,fitScale,fitScale,0],[w*.50,h*.49,fitScale,fitScale,0]];
-  for(const seed of seeds){
-    const z=score(seed);
-    if(z<bestScore){best=seed.slice();bestScore=z;}
-  }
-  let step=[Math.max(4,w*.025),Math.max(4,h*.025),.035,.035,.035];
-  for(let round=0;round<9;round++){
-    let changed=true,iteration=0;
-    while(changed && iteration++<5){
-      changed=false;
-      for(let j=0;j<5;j++)for(const direction of [-1,1]){
-        const candidate=best.slice();
-        candidate[j]+=step[j]*direction;
-        if(candidate[2]<.8*fitScale||candidate[2]>1.25*fitScale||
-           candidate[3]<.8*fitScale||candidate[3]>1.25*fitScale||
-           Math.abs(candidate[4])>.11)continue;
-        const value=score(candidate);
-        if(value<bestScore){best=candidate;bestScore=value;changed=true;}
+  let best=null,bestScore=Infinity;
+  // Allow translation and small per-axis scaling variation for scanner crops.
+  // For 90-degree rotations, calculate the starting scale from the swapped net bounds.
+  for(const angle of angles){
+    const rotated=Math.abs(Math.sin(angle))>.8;
+    const netWidth=rotated?920:620,netHeight=rotated?620:920;
+    const baseScale=Math.min(w/netWidth,h/netHeight);
+    const positions=[
+      [w*.5,h*.5],
+      [w*.48,h*.5],[w*.52,h*.5],
+      [w*.5,h*.48],[w*.5,h*.52]
+    ];
+    for(const [cx,cy] of positions){
+      let candidate=[cx,cy,baseScale,baseScale,angle];
+      let value=score(candidate);
+      let step=[Math.max(2,w*.035),Math.max(2,h*.035),
+        baseScale*.065,baseScale*.065,.04];
+      for(let round=0;round<8;round++){
+        let changed=true,iteration=0;
+        while(changed&&iteration++<5){
+          changed=false;
+          for(let j=0;j<5;j++)for(const dir of [-1,1]){
+            const q=candidate.slice();
+            q[j]+=dir*step[j];
+            if(q[2]<baseScale*.82||q[2]>baseScale*1.18||
+               q[3]<baseScale*.82||q[3]>baseScale*1.18||
+               Math.abs(q[4]-angle)>.10)continue;
+            const v=score(q);
+            if(v<value){candidate=q;value=v;changed=true;}
+          }
+        }
+        step=step.map(v=>v*.55);
       }
+      if(value<bestScore){bestScore=value;best=candidate;}
     }
-    step=step.map(v=>v*.58);
   }
+  if(!best)throw Error(label+' could not find a plausible page orientation.');
   const quality=score(best,true);
-  report(label+': outline score '+quality.avg.toFixed(2)+'px, '+quality.good+'/'+quality.count+
-    ' near printed edges.');
-  if(quality.valid/quality.count<.88 || quality.avg>6.6 ||
-     quality.good/quality.count<.20) {
-    throw Error(label+' alignment confidence too low (score '+quality.avg.toFixed(2)+
-      ', '+quality.good+'/'+quality.count+' close outline points). Please use a clearer scan.');
+  const rotation=Math.round(best[4]*180/Math.PI);
+  report(label+': rotation '+rotation+'°, outline score '+quality.avg.toFixed(2)+
+    ', '+quality.good+'/'+quality.count+' close points, '+quality.bands+'/8 page bands.');
+  if(quality.valid/quality.count<.92||quality.avg>4.0||
+     quality.good/quality.count<.30||quality.bands<6){
+    throw Error(label+' outline alignment failed validation (rotation '+rotation+
+      '°, '+quality.good+'/'+quality.count+' close points across '+quality.bands+
+      '/8 regions). Refusing to export a damaged texture.');
   }
   return {params:best,quality};
 }
