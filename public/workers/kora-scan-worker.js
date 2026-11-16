@@ -6,8 +6,16 @@ function stage(message) { self.postMessage({type:'progress',message}); }
 function verify() {
   if (lib) return lib;
   stage('Loading local JavaScript feature matcher (no WebAssembly)...');
-  importScripts(LIB);
-  lib = self.jsfeat;
+  // JSFeat 0.0.8 is a legacy browser bundle whose UMD wrapper references
+  // a global `window`. Workers expose `self` instead, so provide that alias
+  // *before* evaluating the library. It has no DOM dependency for these APIs.
+  self.window = self;
+  try {
+    importScripts(LIB);
+  } catch (error) {
+    throw new Error('Could not initialize JSFeat in worker: ' + String(error));
+  }
+  lib = self.jsfeat || self.window.jsfeat;
   if (!lib || !lib.orb || !lib.motion_estimator)
     throw Error('JSFeat did not initialize. Check /vendor/jsfeat.min.js.');
   return lib;
