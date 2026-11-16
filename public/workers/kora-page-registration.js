@@ -168,7 +168,7 @@ async function process(data){
   progress('Orienting printed sheet and extracting its continuous outline...');
   await tick();
   const img=makeGray(data),dims=img.dims;
-  progress(manual?'Applying full-page adjustments...':'Finding the full-page alignment (no panel cuts)...');
+  progress('Finding the shared global alignment for the complete football net...');
   await tick();
   const fit=align(img.gray,img.dw,img.dh,dims,false);
   const quality=fit.quality;
