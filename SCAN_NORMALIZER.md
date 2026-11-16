@@ -1,37 +1,28 @@
-# Browser-only scan normalizer — blank-template registration prototype
+# Scan normalizer — JavaScript-only worker (experimental)
 
-This implementation replaces the original four-point UI with a two-stage geometric registration:
-1. **Blank printed sheet PDF → child's scanned PDF**: match the known outlines and static page markings.
-2. **Blank printed sheet PDF → known-good 1024×1024 renderer texture**: map that exact panel net into the renderer's texture coordinates.
-3. Compose the two transforms to warp the child scan directly into 1024×1024.
-4. Extract approximately 32 closed polygon panels from the blank printed sheet and mask out margins, branding outside panels, QR code and handwritten contact details.
+The scan normalizer is frontend-only; it uses PDF.js for input, JSFeat 0.0.8 for ORB features / homography RANSAC, and plain JavaScript for the color warp and 32-panel masking.
 
-All image processing happens in the browser. No backend and no AI model needed.
+**There is no OpenCV.js or WebAssembly requirement.** The scanned artwork never leaves the browser.
 
-## How to test in Angular
-- Checkout `feature/browser-scan-normalizer`, then run `npm ci && npm start`.
-- Unlock the app.
-- Under **Scan to 3D Texture**, upload these three files:
-  1. the colored scan (e.g. `WhatsApp Scan 2026-09-25 at 21.17.50.pdf`);
-  2. the original uncolored printing file (`Kora 50 Copies(1).pdf`);
-  3. the exact tested 1024×1024 texture master image.
-- Click **Auto Align & Remove Page Text**, review preview, then **Render on Ball** or **Download PNG**.
+## Run
+```bash
+git switch feature/browser-scan-normalizer
+npm install
+npm start
+```
+The npm postinstall/start scripts copy JSFeat from the local npm installation into `public/vendor/jsfeat.min.js`. Check `http://localhost:4200/vendor/jsfeat.min.js` if the worker reports an asset error.
 
-No manual corner selection is required.
+Upload the child scan (PDF or image), the original blank KORA printing PDF and the already-working 1024×1024 texture target, then choose Auto Align. The worker reports independent matching stages.
 
-## Local algorithm verification
-The method was independently tested using desktop OpenCV against the two user PDFs and reference JPG:
-- blank-to-scan: **39 inliers / 58 feature matches**
-- blank-to-render-texture: **36 inliers / 92 feature matches**
-- closed panel contours detected: **32**
-- generated 1024×1024 proof PNG with outside-of-panel contact text and QR removed
-
-These are **offline OpenCV algorithm checks**, not evidence that the Angular browser/WASM implementation passes yet. Browser execution, build, 3D output, and compatibility still require validation.
+## Technical details
+- Two-stage perspective registration: blank print → child scan and blank print → render texture.
+- Image features are detected on downsized copies, while final pixels are sampled from the full-resolution original scan.
+- Static reference polygons represent the 32 football panels extracted from the supplied blank printable PDF; polygon edges have a small safety margin to reduce clipping.
+- Rejects low-confidence homographies instead of exporting a plausible but incorrect design.
+- No manual four-point calibration.
 
 ## Limitations
-- OpenCV.js & PDF.js currently load from static external CDNs (no file uploaded). To run offline, vendor their scripts locally.
-- The blank printable sheet must be provided as input until we bundle a preprocessed reference with the app.
-- Automatic feature matching can fail with blurred, heavily cropped or strongly distorted photos; it rejects low-confidence results rather than blindly warping.
-- The 32-panel contour mask has a few edge artifacts due to scanned outlines, and the panel seam boundaries may need refinement.
-- No local distortion correction, shadow/lighting correction or direct WhatsApp integration yet.
-- Existing application client-side password handling is NOT secure authentication.
+- Browser rendering has **not yet been verified** on the user's machine. JSFeat RANSAC can fail for some heavily colored, blurred or cropped scans.
+- The polygon reference is tied to the provided KORA blank sheet. Different revisions may need updated panel geometry.
+- Perspective correction cannot fix a folded or strongly curved paper sheet; inspect before using the PNG.
+- PDF.js still loads from a CDN; this can be vendored in another iteration.

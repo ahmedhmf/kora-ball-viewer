@@ -1,193 +1,177 @@
-/* KORA foreground-free scan normalization worker.
- * No user image data is transmitted off-device. All OpenCV processing happens here.
- * The Angular caller enforces a 45-second watchdog and can terminate this worker.
- */
 'use strict';
-const CV_URL = '/vendor/opencv.js';
-const report = (message) => self.postMessage({type:'progress',message});
-const fail = (error) => self.postMessage({type:'error',message:String(error && error.message || error)});
-let cvPromise;
-async function loadCV() {
-  if (cvPromise) return cvPromise;
-  cvPromise = (async () => {
-    report('OpenCV: loading locally bundled 4.10.0 build...');
-    // OpenCV.js Emscripten builds may expose a Promise or an asynchronous Module.
-    // Set the Module startup callback before importScripts to support both forms.
-    let initialized = false;
-    let initializedResolve;
-    const initializedPromise = new Promise(resolve => { initializedResolve = resolve; });
-    self.Module = {
-      onRuntimeInitialized() {
-        initialized = true;
-        initializedResolve();
-      },
-      onAbort(reason) { fail(new Error('OpenCV WASM aborted: ' + reason)); },
-    };
-    if (!self.cv) {
-      try {
-        importScripts(CV_URL);
-      } catch (error) {
-        throw new Error('Cannot load local OpenCV asset ' + CV_URL + ': ' + String(error));
-      }
-    }
-    report('OpenCV: script loaded; initializing WebAssembly...');
-    const candidate = self.cv;
-    if (!candidate) throw new Error('OpenCV script loaded but did not register a cv module');
-    let api = candidate;
-    if (typeof candidate.then === 'function') {
-      api = await Promise.race([
-        Promise.resolve(candidate),
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error('OpenCV WASM initialization exceeded 20 seconds')), 20000)),
-      ]);
-    } else if (typeof candidate.Mat !== 'function') {
-      await Promise.race([
-        initializedPromise,
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error('OpenCV runtime callback was not called')), 20000)),
-      ]);
-      api = self.cv;
-    }
-    if (!api || typeof api.Mat !== 'function' ||
-        typeof api.ORB !== 'function' || typeof api.findHomography !== 'function') {
-      throw new Error('OpenCV loaded without the required feature-matching APIs');
-    }
-    report('OpenCV: ready; starting registration...');
-    return api;
-  })();
-  return cvPromise;
+// Browser-only JSFeat worker. No OpenCV.js or WASM initialization.
+const LIB = '/vendor/jsfeat.min.js';
+let lib;
+function stage(message) { self.postMessage({type:'progress',message}); }
+function verify() {
+  if (lib) return lib;
+  stage('Loading local JavaScript feature matcher (no WebAssembly)...');
+  importScripts(LIB);
+  lib = self.jsfeat;
+  if (!lib || !lib.orb || !lib.motion_estimator)
+    throw Error('JSFeat did not initialize. Check /vendor/jsfeat.min.js.');
+  return lib;
 }
-function matFromPacket(cv, p) {
-  return cv.matFromImageData(new ImageData(new Uint8ClampedArray(p.pixels),p.width,p.height));
-}
-function scaledGray(cv, p, limit=1050) {
-  const scale = Math.min(1,limit/Math.max(p.width,p.height));
-  const w = Math.max(1,Math.round(p.width*scale)),h=Math.max(1,Math.round(p.height*scale));
-  const original = matFromPacket(cv,p), resized=new cv.Mat(),gray=new cv.Mat();
-  try {
-    cv.resize(original,resized,new cv.Size(w,h),0,0,cv.INTER_AREA);
-    cv.cvtColor(resized,gray,cv.COLOR_RGBA2GRAY);
-    return {gray, sx:p.width/w,sy:p.height/h};
-  } finally {original.delete();resized.delete();}
-}
-function match(cv, a, b) {
-  const ref=scaledGray(cv,a), target=scaledGray(cv,b);
-  const k1=new cv.KeyPointVector(),k2=new cv.KeyPointVector();
-  const d1=new cv.Mat(),d2=new cv.Mat(),empty=new cv.Mat(),pairs=new cv.DMatchVectorVector();
-  let orb,matcher;
-  try {
-    orb=new cv.ORB(1800);
-    orb.detectAndCompute(ref.gray,empty,k1,d1);
-    orb.detectAndCompute(target.gray,empty,k2,d2);
-    if(d1.empty()||d2.empty())throw Error('No matching panel outlines were detected.');
-    matcher=new cv.BFMatcher(cv.NORM_HAMMING,false);
-    matcher.knnMatch(d1,d2,pairs,2);
-    const src=[],dst=[];
-    for(let i=0;i<pairs.size();i++){
-      const row=pairs.get(i);
-      try {
-        if(row.size()<2)continue;
-        const first=row.get(0),second=row.get(1);
-        if(first.distance>=.70*second.distance)continue;
-        const p=k1.get(first.queryIdx).pt,q=k2.get(first.trainIdx).pt;
-        src.push(p.x*ref.sx,p.y*ref.sy);
-        dst.push(q.x*target.sx,q.y*target.sy);
-      }finally{row.delete();}
+const PANEL_POLYGONS = [[[353,63],[400,97],[382,152],[325,152],[307,97]],[[250,84],[306,96],[321,140],[285,195],[229,183],[211,130]],[[458,85],[496,131],[477,184],[422,195],[383,150],[402,96]],[[324,152],[388,159],[412,201],[382,251],[322,247],[296,200]],[[413,202],[468,214],[475,271],[423,295],[383,252]],[[295,202],[324,253],[284,295],[233,272],[238,217]],[[325,252],[382,252],[411,300],[382,352],[325,352],[298,307]],[[478,329],[521,367],[507,425],[454,442],[411,403],[424,346]],[[229,329],[285,348],[296,404],[254,442],[197,422],[186,368]],[[324,354],[382,353],[400,408],[353,442],[307,408]],[[590,365],[623,417],[601,465],[544,471],[512,417],[534,371]],[[117,366],[174,372],[194,416],[163,472],[106,466],[85,420]],[[455,442],[509,425],[539,465],[509,518],[454,500]],[[402,414],[454,443],[454,500],[405,529],[353,500],[353,443]],[[302,414],[353,443],[353,500],[303,530],[253,500],[253,443]],[[198,426],[253,444],[253,500],[200,519],[164,473]],[[163,472],[196,524],[173,572],[116,577],[87,519],[107,477]],[[544,471],[601,477],[623,525],[591,577],[535,572],[511,523]],[[353,502],[400,536],[382,590],[325,590],[308,541]],[[454,501],[509,519],[521,576],[478,614],[422,595],[411,540]],[[253,501],[296,539],[283,597],[229,614],[186,575],[199,519]],[[324,591],[388,598],[412,640],[382,690],[322,686],[296,639]],[[295,641],[324,691],[284,734],[232,709],[238,654]],[[412,641],[470,661],[475,710],[422,734],[383,691]],[[325,691],[382,691],[411,739],[382,791],[325,791],[298,746]],[[422,748],[477,760],[496,815],[458,858],[402,847],[385,800]],[[285,748],[321,803],[305,847],[250,859],[211,816],[230,760]],[[324,793],[382,792],[400,847],[350,879],[307,847]],[[404,853],[454,882],[454,940],[404,969],[354,940],[354,882]],[[302,853],[353,882],[353,940],[303,969],[253,940],[253,882]],[[201,865],[253,883],[253,939],[198,958],[164,911]],[[509,864],[543,912],[508,958],[454,939],[454,883]]];
+function pixelsToGray(js, packet, size=960) {
+  const scale = Math.min(1,size / Math.max(packet.width, packet.height));
+  const w = Math.max(1,Math.round(packet.width*scale));
+  const h = Math.max(1,Math.round(packet.height*scale));
+  const matrix = new js.matrix_t(w,h,js.U8_t | js.C1_t);
+  const data = new Uint8ClampedArray(packet.pixels);
+  for (let y=0;y<h;y++){
+    const sy = Math.min(packet.height-1, Math.floor(y*packet.height/h));
+    for (let x=0;x<w;x++){
+      const sx = Math.min(packet.width-1, Math.floor(x*packet.width/w));
+      const pos=4*(sy*packet.width+sx);
+      matrix.data[y*w+x]=Math.round(.299*data[pos]+.587*data[pos+1]+.114*data[pos+2]);
     }
-    const count=src.length/2;
-    if(count<18)throw Error('Too few matching outlines ('+count+'). Check that the original blank print PDF matches the scan.');
-    const s=cv.matFromArray(count,1,cv.CV_32FC2,src),d=cv.matFromArray(count,1,cv.CV_32FC2,dst),mask=new cv.Mat();
-    try {
-      const h=cv.findHomography(s,d,cv.RANSAC,5,mask),inliers=cv.countNonZero(mask);
-      if(h.empty()||inliers<12||inliers/count<.24){
-        h.delete();throw Error('Low-confidence automatic alignment ('+inliers+'/'+count+').');
-      }
-      return {h,inliers,matches:count};
-    }finally{s.delete();d.delete();mask.delete();}
-  }finally{
-    ref.gray.delete();target.gray.delete();k1.delete();k2.delete();
-    d1.delete();d2.delete();empty.delete();pairs.delete();orb?.delete();matcher?.delete();
   }
+  return {gray:matrix,xScale:packet.width/w,yScale:packet.height/h};
 }
-function panelMask(cv, packet) {
-  const blank=matFromPacket(cv,packet),gray=new cv.Mat(),binary=new cv.Mat();
-  const contours=new cv.MatVector(),hierarchy=new cv.Mat();
-  const mask=cv.Mat.zeros(packet.height,packet.width,cv.CV_8UC1);
-  let panels=0;
-  try {
-    cv.cvtColor(blank,gray,cv.COLOR_RGBA2GRAY);
-    cv.threshold(gray,binary,238,255,cv.THRESH_BINARY_INV);
-    cv.findContours(binary,contours,hierarchy,cv.RETR_LIST,cv.CHAIN_APPROX_SIMPLE);
-    const scale=packet.height/1024;
-    for(let i=0;i<contours.size();i++){
-      const contour=contours.get(i),poly=new cv.Mat();
-      try{
-        const area=cv.contourArea(contour);
-        cv.approxPolyDP(contour,poly,.025*cv.arcLength(contour,true),true);
-        const box=cv.boundingRect(contour);
-        if(area<3500*scale*scale||area>12500*scale*scale||
-           poly.rows<5||poly.rows>8||
-           box.width<50*scale||box.height<55*scale||
-           box.x<packet.width*.09||box.x+box.width>packet.width*.94||
-           box.y<packet.height*.025||box.y+box.height>packet.height*.97)continue;
-        const polys=new cv.MatVector();
-        try{
-          polys.push_back(poly);
-          cv.fillPoly(mask,polys,new cv.Scalar(255));
-          panels++;
-        }finally{polys.delete();}
-      }finally{poly.delete();contour.delete();}
-    }
-    return {mask,panels};
-  }catch(e){mask.delete();throw e;}
-  finally{blank.delete();gray.delete();binary.delete();contours.delete();hierarchy.delete();}
-}
-async function normalize(message) {
-  const cv=await loadCV();
-  const {scan,blank,master}=message;
-  report('Matching blank print to child scan...');
-  // Let progress display before CPU-intensive OpenCV calls.
-  await new Promise(resolve=>setTimeout(resolve,0));
-  const scanMatch=match(cv,blank,scan);
-  let masterMatch,inverse,composite,source,warped,blankMask,targetMask,expanded,output,zeroMat,kernel;
-  try{
-    report('Matching blank print to render texture...');
-    await new Promise(resolve=>setTimeout(resolve,0));
-    masterMatch=match(cv,blank,master);
-    report('Warping scanned artwork to 1024 × 1024...');
-    await new Promise(resolve=>setTimeout(resolve,0));
-    inverse=new cv.Mat();
-    if(cv.invert(scanMatch.h,inverse,cv.DECOMP_LU)===0)throw Error('Could not invert scan transform.');
-    composite=new cv.Mat();zeroMat=cv.Mat.zeros(3,3,cv.CV_64FC1);
-    cv.gemm(masterMatch.h,inverse,1,zeroMat,0,composite);
-    source=matFromPacket(cv,scan);warped=new cv.Mat();
-    cv.warpPerspective(source,warped,composite,new cv.Size(1024,1024),
-      cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar(255,255,255,255));
-    report('Finding and expanding all panel boundaries...');
-    await new Promise(resolve=>setTimeout(resolve,0));
-    const panelsResult=panelMask(cv,blank);
-    blankMask=panelsResult.mask;
-    if(panelsResult.panels<28||panelsResult.panels>35)
-      throw Error('Expected 32 football panels, detected '+panelsResult.panels+'.');
-    targetMask=new cv.Mat();
-    cv.warpPerspective(blankMask,targetMask,masterMatch.h,new cv.Size(1024,1024),
-      cv.INTER_NEAREST,cv.BORDER_CONSTANT,new cv.Scalar(0));
-    kernel=cv.getStructuringElement(cv.MORPH_ELLIPSE,new cv.Size(7,7));
-    expanded=new cv.Mat();
-    cv.dilate(targetMask,expanded,kernel);
-    output=new cv.Mat(1024,1024,cv.CV_8UC4,new cv.Scalar(255,255,255,255));
-    warped.copyTo(output,expanded);
-    const pixels=new Uint8ClampedArray(output.data);
-    self.postMessage({type:'complete',pixels:pixels.buffer,panels:panelsResult.panels,
-      scanInliers:scanMatch.inliers,scanMatches:scanMatch.matches,
-      masterInliers:masterMatch.inliers,masterMatches:masterMatch.matches},[pixels.buffer]);
-  }finally{
-    scanMatch.h.delete();masterMatch?.h.delete();inverse?.delete();composite?.delete();
-    source?.delete();warped?.delete();blankMask?.delete();targetMask?.delete();
-    expanded?.delete();output?.delete();zeroMat?.delete();kernel?.delete();
+function detect(js, packet) {
+  const res=pixelsToGray(js, packet);
+  const gray=res.gray;
+  const corners = [];
+  // JSFeat writes detected keypoints into caller-allocated slots.
+  for(let i=0;i<20000;i++)corners.push(new js.keypoint_t(0,0,0,0));
+  js.fast_corners.set_threshold(20);
+  let n=js.fast_corners.detect(gray,corners,20);
+  if(n<30)throw Error('Could not find enough corners on a print. Check scan quality.');
+  corners.length=n;
+  corners.sort((a,b)=>b.score-a.score);
+  // Spatially distributed keypoints help avoid matches concentrated around the QR code.
+  const chosen=[],cellCounts=new Uint8Array(12*12);
+  for(const kp of corners){
+    const cx=Math.min(11,Math.floor(kp.x*12/gray.cols));
+    const cy=Math.min(11,Math.floor(kp.y*12/gray.rows));
+    const ci=cy*12+cx;
+    if(cellCounts[ci]>=7)continue;
+    cellCounts[ci]++;
+    chosen.push(kp);
+    if(chosen.length>=550)break;
   }
+  const desc=new js.matrix_t(32,chosen.length,js.U8_t | js.C1_t);
+  js.orb.describe(gray,chosen,chosen.length,desc);
+  return {keypoints:chosen,descriptors:desc,xScale:res.xScale,yScale:res.yScale};
 }
-self.onmessage=(event)=>{
+const bits = new Uint8Array(256);
+for(let i=0;i<256;i++){let v=i,c=0;while(v){v&=v-1;c++;}bits[i]=c;}
+function hamming(a, ai, b, bi) {
+  let count=0;
+  const da=a.descriptors.data, db=b.descriptors.data;
+  for(let j=0;j<32;j++)count+=bits[da[ai*32+j]^db[bi*32+j]];
+  return count;
+}
+function estimate(js, source, target) {
+  const a=detect(js,source),b=detect(js,target);
+  const src=[],dst=[],ratios=[];
+  // Ratio test + reverse nearest check rejects repetitive polygon edges.
+  const reverse=new Int32Array(b.keypoints.length).fill(-1);
+  const reverseScore=new Int16Array(b.keypoints.length).fill(32767);
+  for(let j=0;j<b.keypoints.length;j++)
+    for(let i=0;i<a.keypoints.length;i++){
+      const d=hamming(a,i,b,j);
+      if(d<reverseScore[j]){reverseScore[j]=d;reverse[j]=i;}
+    }
+  for(let i=0;i<a.keypoints.length;i++){
+    let best=999,second=999,jBest=-1;
+    for(let j=0;j<b.keypoints.length;j++){
+      const d=hamming(a,i,b,j);
+      if(d<best){second=best;best=d;jBest=j;}
+      else if(d<second)second=d;
+    }
+    if(jBest<0||best>90||best>=.78*second||reverse[jBest]!==i)continue;
+    const p=a.keypoints[i],q=b.keypoints[jBest];
+    src.push({x:p.x*a.xScale,y:p.y*a.yScale});
+    dst.push({x:q.x*b.xScale,y:q.y*b.yScale});
+    ratios.push(best);
+  }
+  const n=src.length;
+  if(n<13)throw Error('Only '+n+' reliable matches. This scan needs better feature registration.');
+  const H=new js.matrix_t(3,3,js.F32_t|js.C1_t);
+  const mask=new js.matrix_t(n,1,js.U8_t|js.C1_t);
+  const kernel=new js.motion_model.homography2d();
+  const ok=js.motion_estimator.ransac(new js.ransac_params_t(4,5,.6,.99),
+    kernel,src,dst,n,H,mask,700);
+  const inliers=Array.from(mask.data).slice(0,n).filter(Boolean).length;
+  if(!ok||inliers<10||inliers/n<.22)
+    throw Error('Automatic alignment confidence too low: '+inliers+'/'+n+' matching points.');
+  const m=Array.from(H.data.slice(0,9));
+  if(!m.every(Number.isFinite))throw Error('Feature alignment returned invalid coordinates.');
+  return {H,matchCount:n,inliers};
+}
+function apply(M,x,y) {
+  const d=M[6]*x+M[7]*y+M[8];
+  if(!d||!Number.isFinite(d))return [-1,-1];
+  return [(M[0]*x+M[1]*y+M[2])/d,(M[3]*x+M[4]*y+M[5])/d];
+}
+function makePanelMask() {
+  const c=new OffscreenCanvas(725,1024),ctx=c.getContext('2d',{willReadFrequently:true});
+  ctx.fillStyle='#000';ctx.fillRect(0,0,725,1024);
+  ctx.fillStyle='#fff';ctx.strokeStyle='#fff';ctx.lineJoin='round';ctx.lineWidth=12;
+  for(const polygon of PANEL_POLYGONS){
+    ctx.beginPath();
+    ctx.moveTo(polygon[0][0],polygon[0][1]);
+    for(let i=1;i<polygon.length;i++)ctx.lineTo(polygon[i][0],polygon[i][1]);
+    ctx.closePath();ctx.fill();ctx.stroke();
+  }
+  const rgba=ctx.getImageData(0,0,725,1024).data,mask=new Uint8Array(725*1024);
+  for(let i=0;i<mask.length;i++)mask[i]=rgba[i*4]>100?1:0;
+  return mask;
+}
+function sampleBilinear(scan, x, y, out, oi) {
+  const sw=scan.width,sh=scan.height;
+  if(x<0||y<0||x>=sw-1||y>=sh-1)return;
+  const px=new Uint8ClampedArray(scan.pixels);
+  const a=Math.floor(x),b=Math.floor(y),tx=x-a,ty=y-b;
+  const i=(b*sw+a)*4,j=i+sw*4;
+  for(let c=0;c<3;c++){
+    out[oi+c]=Math.round(
+      px[i+c]*(1-tx)*(1-ty)+px[i+4+c]*tx*(1-ty)+
+      px[j+c]*(1-tx)*ty+px[j+4+c]*tx*ty);
+  }
+  out[oi+3]=255;
+}
+async function process(payload) {
+  const js=verify();
+  const scan=payload.scan,blank=payload.blank,master=payload.master;
+  stage('Matching printed blank to child scan...');
+  await new Promise(r=>setTimeout(r,0));
+  const scanMatch=estimate(js,blank,scan);
+  stage('Matching printed blank to master texture...');
+  await new Promise(r=>setTimeout(r,0));
+  const masterMatch=estimate(js,blank,master);
+  const invertedMaster=new js.matrix_t(3,3,js.F32_t|js.C1_t);
+  js.matmath.invert_3x3(masterMatch.H,invertedMaster);
+  const blankToScan=scanMatch.H.data;
+  const resultMap=new js.matrix_t(3,3,js.F32_t|js.C1_t);
+  js.matmath.multiply_3x3(resultMap,scanMatch.H,invertedMaster);
+  const outputToScan=Array.from(resultMap.data.slice(0,9));
+  const outputToBlank=Array.from(invertedMaster.data.slice(0,9));
+  stage('Compositing the 32 panel regions into a 1024px texture...');
+  await new Promise(r=>setTimeout(r,0));
+  const panelMask=makePanelMask();
+  const pixels=new Uint8ClampedArray(1024*1024*4);
+  pixels.fill(255);
+  for(let y=0;y<1024;y++){
+    if(y%128===0)await new Promise(r=>setTimeout(r,0));
+    const my=y*master.height/1024;
+    for(let x=0;x<1024;x++){
+      const mx=x*master.width/1024;
+      const [bx,by]=apply(outputToBlank,mx,my);
+      const xx=Math.round(bx*725/blank.width),yy=Math.round(by*1024/blank.height);
+      if(xx<0||xx>=725||yy<0||yy>=1024||panelMask[yy*725+xx]===0)continue;
+      const [sx,sy]=apply(outputToScan,mx,my);
+      sampleBilinear(scan,sx,sy,pixels,(y*1024+x)*4);
+    }
+  }
+  self.postMessage({type:'complete',pixels:pixels.buffer,panels:32,
+    scanInliers:scanMatch.inliers,scanMatches:scanMatch.matchCount,
+    masterInliers:masterMatch.inliers,masterMatches:masterMatch.matchCount},
+    [pixels.buffer]);
+}
+self.onmessage=event=>{
   if(event.data?.type!=='normalize')return;
-  normalize(event.data).catch(fail);
+  process(event.data).catch(error=>self.postMessage({type:'error',message:String(error?.message||error)}));
 };

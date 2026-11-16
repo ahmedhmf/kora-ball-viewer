@@ -50,3 +50,4 @@ Thumbs.db
 
 # Built browser asset copied from the pinned npm package
 /public/vendor/opencv.js
+/public/vendor/jsfeat.min.js
