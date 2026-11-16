@@ -26,8 +26,21 @@ export class ScanNormalizerService {
       const element = document.createElement('script');
       element.src = url;
       element.async = true;
-      element.onload = () => resolve();
-      element.onerror = () => reject(new Error('Could not load browser processing library: ' + url));
+      let finished = false;
+      const finish = (error?: Error) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        if (error) {
+          element.remove();
+          reject(error);
+        } else resolve();
+      };
+      const timeout = setTimeout(
+        () => finish(new Error('Timed out loading ' + url + '. Check connection or content blockers.')), 25000
+      );
+      element.onload = () => finish();
+      element.onerror = () => finish(new Error('Could not load ' + url));
       document.head.append(element);
     });
   }
@@ -38,7 +51,7 @@ export class ScanNormalizerService {
       const pdf = (window as any).pdfjsLib;
       pdf.GlobalWorkerOptions.workerSrc = this.pdfWorkerUrl;
       return pdf;
-    })();
+    })().catch((error: unknown) => { this.pdfPromise = undefined; throw error; });
   }
 
   private async cv(): Promise<any> {
@@ -57,9 +70,12 @@ export class ScanNormalizerService {
           check();
         });
         cv = (window as any).cv;
+        if (typeof cv?.then === 'function') cv = await cv;
       }
+      if (typeof cv?.getPerspectiveTransform !== 'function')
+        throw new Error('OpenCV loaded but its image-processing API is unavailable');
       return cv;
-    })();
+    })().catch((error: unknown) => { this.cvPromise = undefined; throw error; });
   }
 
   async readFile(file: File): Promise<HTMLCanvasElement> {
@@ -157,8 +173,13 @@ export class ScanNormalizerService {
     scan: HTMLCanvasElement,
     blank: HTMLCanvasElement,
     master: HTMLCanvasElement,
+    reportProgress: (message: string) => void = () => {},
   ): Promise<RegistrationResult & { panels: number; scanInliers: number; masterInliers: number }> {
+    reportProgress('Loading image-processing library...');
     const cv = await this.cv();
+    reportProgress('Matching blank sheet to the child scan...');
+    // Yield once so Angular can paint the progress text before synchronous WASM processing.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const scanMatch = this.matchReference(cv, blank, scan);
     let masterMatch: { h: any; inliers: number; total: number } | null = null;
     let inverse: any, composite: any;
@@ -166,6 +187,8 @@ export class ScanNormalizerService {
     const panelMaskSource = new cv.Mat(), panelMaskTarget = new cv.Mat();
     const imageResult = new cv.Mat();
     try {
+      reportProgress('Matching blank sheet to the 1024px texture...');
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       masterMatch = this.matchReference(cv, blank, master);
       inverse = new cv.Mat();
       if (cv.invert(scanMatch.h, inverse, cv.DECOMP_LU) === 0)
@@ -175,6 +198,8 @@ export class ScanNormalizerService {
       cv.warpPerspective(source, aligned, composite, new cv.Size(1024, 1024),
         cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
 
+      reportProgress('Extracting printable panels and composing the PNG...');
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       // Extract closed 5/6-sided printable panels from the BLANK reference.
       // This excludes page text, QR, and contact details without guessing their location on a scan.
       const blankMat = cv.imread(blank);
@@ -237,64 +262,78 @@ export class ScanNormalizerService {
 
   private matchReference(cv: any, reference: HTMLCanvasElement, target: HTMLCanvasElement):
       { h: any; inliers: number; total: number } {
-    // ORB works here because the blank PDF and the child's scan share the same
-    // printed contour geometry and page labels even when ink covers some features.
-    const a = cv.imread(reference), b = cv.imread(target);
+    // Match on smaller canvases to avoid freezing the browser on scanned 2K-4K PDF pages.
+    // Scale detected keypoint positions back to original pixel coordinates for homography.
+    const maxDimension = 1100;
+    const prepared = (image: HTMLCanvasElement) => {
+      const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return { canvas, scaleX: image.width / canvas.width, scaleY: image.height / canvas.height };
+    };
+    const ref = prepared(reference), tgt = prepared(target);
+    const a = cv.imread(ref.canvas), b = cv.imread(tgt.canvas);
     const ag = new cv.Mat(), bg = new cv.Mat();
     const k1 = new cv.KeyPointVector(), k2 = new cv.KeyPointVector();
     const d1 = new cv.Mat(), d2 = new cv.Mat();
     const matches = new cv.DMatchVectorVector();
+    const emptyMask = new cv.Mat();
     let orb: any, matcher: any;
     try {
-      cv.cvtColor(a, ag, cv.COLOR_RGBA2GRAY); cv.cvtColor(b, bg, cv.COLOR_RGBA2GRAY);
-      orb = new cv.ORB(4000);
-      orb.detectAndCompute(ag, new cv.Mat(), k1, d1);
-      orb.detectAndCompute(bg, new cv.Mat(), k2, d2);
+      cv.cvtColor(a, ag, cv.COLOR_RGBA2GRAY);
+      cv.cvtColor(b, bg, cv.COLOR_RGBA2GRAY);
+      orb = new cv.ORB(1800);
+      orb.detectAndCompute(ag, emptyMask, k1, d1);
+      orb.detectAndCompute(bg, emptyMask, k2, d2);
       if (d1.empty() || d2.empty()) throw new Error('Not enough recognizable features');
       matcher = new cv.BFMatcher(cv.NORM_HAMMING, false);
       matcher.knnMatch(d1, d2, matches, 2);
-      const s: number[] = [], t: number[] = [];
+      const sourcePoints: number[] = [], targetPoints: number[] = [];
       for (let i = 0; i < matches.size(); i++) {
         const pair = matches.get(i);
         try {
           if (pair.size() < 2) continue;
           const best = pair.get(0), next = pair.get(1);
-          if (best.distance >= .70 * next.distance) continue;
+          if (best.distance >= 0.70 * next.distance) continue;
           const from = k1.get(best.queryIdx).pt, to = k2.get(best.trainIdx).pt;
-          s.push(from.x, from.y); t.push(to.x, to.y);
+          sourcePoints.push(from.x * ref.scaleX, from.y * ref.scaleY);
+          targetPoints.push(to.x * tgt.scaleX, to.y * tgt.scaleY);
         } finally { pair.delete(); }
       }
-      if (s.length < 24) throw new Error('Could not recognize enough printed outline features');
-      const src = cv.matFromArray(s.length / 2, 1, cv.CV_32FC2, s);
-      const dst = cv.matFromArray(t.length / 2, 1, cv.CV_32FC2, t);
-      const mask = new cv.Mat();
+      const count = sourcePoints.length / 2;
+      if (count < 18) throw new Error('Too few matching outlines; check the blank sheet and scan.');
+      const src = cv.matFromArray(count, 1, cv.CV_32FC2, sourcePoints);
+      const dst = cv.matFromArray(count, 1, cv.CV_32FC2, targetPoints);
+      const inlierMask = new cv.Mat();
       try {
-        const h = cv.findHomography(src, dst, cv.RANSAC, 4, mask);
-        const inliers = cv.countNonZero(mask);
-        if (h.empty() || inliers < 12 || inliers / (s.length / 2) < 0.24) {
+        const h = cv.findHomography(src, dst, cv.RANSAC, 5, inlierMask);
+        const inliers = cv.countNonZero(inlierMask);
+        if (h.empty() || inliers < 12 || inliers / count < 0.24) {
           h.delete();
-          throw new Error('Low-confidence template matching. Please use a clearer scan.');
+          throw new Error('Low-confidence template matching; try a clearer scan.');
         }
-        // Reject plausible-looking but wildly distorted homographies.
         const corners = cv.matFromArray(4, 1, cv.CV_32FC2,
-          [0,0,reference.width,0,reference.width,reference.height,0,reference.height]);
+          [0, 0, reference.width, 0, reference.width, reference.height, 0, reference.height]);
         const warped = new cv.Mat();
         try {
           cv.perspectiveTransform(corners, warped, h);
           for (let i = 0; i < 4; i++) {
             const x = warped.data32F[i * 2], y = warped.data32F[i * 2 + 1];
             if (!Number.isFinite(x) || !Number.isFinite(y) ||
-                x < -target.width * .7 || y < -target.height * .7 ||
+                x < -target.width * 0.7 || y < -target.height * 0.7 ||
                 x > target.width * 1.7 || y > target.height * 1.7) {
-              h.delete(); throw new Error('Template alignment distortion is too large');
+              h.delete();
+              throw new Error('Alignment distortion is too large');
             }
           }
         } finally { corners.delete(); warped.delete(); }
-        return { h, inliers, total: s.length / 2 };
-      } finally { src.delete(); dst.delete(); mask.delete(); }
+        return { h, inliers, total: count };
+      } finally { src.delete(); dst.delete(); inlierMask.delete(); }
     } finally {
       a.delete(); b.delete(); ag.delete(); bg.delete();
-      k1.delete(); k2.delete(); d1.delete(); d2.delete(); matches.delete();
+      k1.delete(); k2.delete(); d1.delete(); d2.delete(); matches.delete(); emptyMask.delete();
       orb?.delete(); matcher?.delete();
     }
   }
