@@ -61,94 +61,154 @@ function boundarySamples() {
   return points;
 }
 const POINTS=boundarySamples();
+/**
+ * Locate the unique printed QR-code region from its dense two-axis edge pattern.
+ * The KORA blank print places it in the bottom-left; unlike the repeated
+ * football panels this landmark determines the sheet's actual orientation.
+ */
+function locateQr(packet) {
+  const image=grayImage(packet,1024);
+  const {values:g,width:w,height:h}=image;
+  // A QR finder region produces many strong horizontal AND vertical changes.
+  const dense=new Uint8Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+    const i=y*w+x;
+    if(Math.abs(g[i+1]-g[i-1])>18&&Math.abs(g[i+w]-g[i-w])>18)
+      dense[i]=1;
+  }
+  const integral=new Uint32Array((w+1)*(h+1));
+  for(let y=0;y<h;y++){
+    let sum=0;
+    for(let x=0;x<w;x++){
+      sum+=dense[y*w+x];
+      integral[(y+1)*(w+1)+x+1]=integral[y*(w+1)+x+1]+sum;
+    }
+  }
+  const size=Math.max(22,Math.round(Math.min(w,h)*.058));
+  const corners=[
+    ['top-left', 0,Math.round(w*.17),0,Math.round(h*.22)],
+    ['top-right',Math.round(w*.83),w,0,Math.round(h*.22)],
+    ['bottom-left',0,Math.round(w*.17),Math.round(h*.78),h],
+    ['bottom-right',Math.round(w*.83),w,Math.round(h*.78),h]
+  ];
+  const results=[];
+  for(const [name,x0,x1,y0,y1] of corners){
+    let best=-1,position=null;
+    for(let y=Math.max(Math.round(y0)+size/2,2)|0;
+        y<Math.min(Math.round(y1)-size/2,h-2);y+=3){
+      for(let x=Math.max(Math.round(x0)+size/2,2)|0;
+          x<Math.min(Math.round(x1)-size/2,w-2);x+=3){
+        const left=x-(size>>1),top=y-(size>>1),right=left+size,bottom=top+size;
+        const count=integral[bottom*(w+1)+right]-
+          integral[top*(w+1)+right]-integral[bottom*(w+1)+left]+
+          integral[top*(w+1)+left];
+        if(count>best){best=count;position=[x/image.ratioX,y/image.ratioY];}
+      }
+    }
+    results.push({corner:name,score:best,position});
+  }
+  results.sort((a,b)=>b.score-a.score);
+  const winner=results[0],runner=results[1];
+  // A QR-like feature must be distinctive; otherwise do not guess 180°.
+  if(!winner.position||winner.score<20||winner.score<runner.score*1.45)
+    throw Error('Cannot identify the printed QR orientation reliably. '+
+      'Use the original full-page scan with the QR code visible.');
+  return winner;
+}
+
 function fitSheet(blank,target,label) {
   const img=grayImage(target),dist=edgeDistance(img);
   const w=target.width,h=target.height;
   const isTexture=label==='Texture';
-  // The 32 panel polygons are defined in a *fixed 725x1024 coordinate system*.
-  // Never divide scale by the uploaded blank PDF raster height: PDF.js may render
-  // it at any device resolution, producing an incorrect fitted zoom.
-  //
-  // Scan input can be rotated by 0/90/180/270 degrees by WhatsApp scanners.
-  // The canonical texture has one fixed upright orientation and is never rotated.
-  const angles=isTexture?[0]:[0,Math.PI/2,Math.PI,-Math.PI/2];
-  const score=(p,detailed=false)=>{
-    const [cx,cy,sx,sy,angle]=p;
-    const cs=Math.cos(angle),sn=Math.sin(angle);
-    const stride=detailed?1:2;
-    const bands=new Uint16Array(8);
-    const totals=new Uint16Array(8);
-    let error=0,good=0,valid=0,total=0;
+  let qr=null;
+  let angle=0;
+  if(!isTexture){
+    qr=locateQr(target);
+    angle={
+      'bottom-left':0,
+      'top-right':Math.PI,
+      'top-left':Math.PI/2,
+      'bottom-right':-Math.PI/2
+    }[qr.corner];
+    report('QR anchor found at '+qr.corner+
+      '; correcting scan orientation by '+Math.round(angle*180/Math.PI)+'°.');
+  }
+  const xRef=40-362.5,yRef=928-512;
+  const score=(p,detail=false)=>{
+    const [cx,cy,sx,sy,a]=p;
+    const cs=Math.cos(a),sn=Math.sin(a);
+    const stride=detail?1:2;
+    const bands=new Uint16Array(8),totals=new Uint16Array(8);
+    let sum=0,good=0,valid=0,count=0;
     for(let i=0;i<POINTS.length;i+=stride){
-      const xx=POINTS[i][0],yy=POINTS[i][1];
+      const [xx,yy]=POINTS[i];
       const x=(cx+sx*(xx*cs-yy*sn))*img.ratioX;
       const y=(cy+sy*(xx*sn+yy*cs))*img.ratioY;
       const ix=Math.round(x),iy=Math.round(y);
-      let d=20;
+      let d=18;
       if(ix>=1&&iy>=1&&ix<img.width-1&&iy<img.height-1){
-        valid++;
-        d=dist[iy*img.width+ix]/3;
+        valid++;d=dist[iy*img.width+ix]/3;
       }
-      const band=Math.min(7,Math.max(0,Math.floor((yy+512)/128)));
+      const band=Math.max(0,Math.min(7,Math.floor((yy+512)/128)));
       totals[band]++;
-      if(d<2.8){good++;bands[band]++;}
-      error+=Math.min(12,d);
-      total++;
+      if(d<3){good++;bands[band]++;}
+      sum+=Math.min(12,d);count++;
     }
-    if(detailed){
-      const covered=Array.from(bands).filter((n,i)=>totals[i]>0&&n/totals[i]>.16).length;
-      return {avg:error/total,good,valid,count:total,bands:covered};
-    }
-    return error/total;
+    const qx=cx+sx*(xRef*cs-yRef*sn);
+    const qy=cy+sy*(xRef*sn+yRef*cs);
+    const qrOffset=qr?Math.hypot(qx-qr.position[0],qy-qr.position[1]):0;
+    if(detail)return {
+      avg:sum/count,good,valid,count,qrOffset,
+      bands:Array.from(bands).filter((n,i)=>totals[i]>0&&n/totals[i]>.16).length
+    };
+    // Unlike the old fit, don't let repetitive pentagons override the unique
+    // page landmark. Fixes valid-looking but mirrored/upside-down outputs.
+    return sum/count+qrOffset*.11;
   };
-  let best=null,bestScore=Infinity;
-  // Allow translation and small per-axis scaling variation for scanner crops.
-  // For 90-degree rotations, calculate the starting scale from the swapped net bounds.
-  for(const angle of angles){
-    const rotated=Math.abs(Math.sin(angle))>.8;
-    const netWidth=rotated?920:620,netHeight=rotated?620:920;
-    const baseScale=Math.min(w/netWidth,h/netHeight);
-    const positions=[
-      [w*.5,h*.5],
-      [w*.48,h*.5],[w*.52,h*.5],
-      [w*.5,h*.48],[w*.5,h*.52]
-    ];
-    for(const [cx,cy] of positions){
-      let candidate=[cx,cy,baseScale,baseScale,angle];
-      let value=score(candidate);
-      let step=[Math.max(2,w*.035),Math.max(2,h*.035),
-        baseScale*.065,baseScale*.065,.04];
-      for(let round=0;round<8;round++){
-        let changed=true,iteration=0;
-        while(changed&&iteration++<5){
-          changed=false;
-          for(let j=0;j<5;j++)for(const dir of [-1,1]){
-            const q=candidate.slice();
-            q[j]+=dir*step[j];
-            if(q[2]<baseScale*.82||q[2]>baseScale*1.18||
-               q[3]<baseScale*.82||q[3]>baseScale*1.18||
-               Math.abs(q[4]-angle)>.10)continue;
-            const v=score(q);
-            if(v<value){candidate=q;value=v;changed=true;}
-          }
+  let best=null,bestValue=Infinity;
+  const sxCandidates=isTexture?[1.0,1.1,1.17]:[.66,.8,.95,1.1];
+  const syCandidates=isTexture?[1.0,1.1,1.17]:[.75,.9,1.05,1.2];
+  for(const xs of sxCandidates)for(const ys of syCandidates){
+    const cx=qr?qr.position[0]-xs*(xRef*Math.cos(angle)-yRef*Math.sin(angle)):w*.5;
+    const cy=qr?qr.position[1]-ys*(xRef*Math.sin(angle)+yRef*Math.cos(angle)):h*.5;
+    const seed=[cx,cy,xs,ys,angle];
+    // Scans may be non-uniformly resized by mobile scan apps.
+    // Find a constrained local minimum around the QR-anchored seed.
+    let candidate=seed.slice(),value=score(candidate);
+    let step=[w*.023,h*.023,xs*.075,ys*.075,.025];
+    for(let round=0;round<8;round++){
+      let changed=true,iterations=0;
+      while(changed&&iterations++<4){
+        changed=false;
+        for(let j=0;j<5;j++)for(const direction of [-1,1]){
+          const next=candidate.slice();
+          next[j]+=step[j]*direction;
+          if(next[2]<.48||next[2]>1.4||
+             next[3]<.55||next[3]>1.4||
+             Math.abs(next[4]-angle)>.11)continue;
+          const v=score(next);
+          if(v<value){candidate=next;value=v;changed=true;}
         }
-        step=step.map(v=>v*.55);
       }
-      if(value<bestScore){bestScore=value;best=candidate;}
+      step=step.map(x=>x*.57);
     }
+    if(value<bestValue){best=candidate;bestValue=value;}
   }
-  if(!best)throw Error(label+' could not find a plausible page orientation.');
+  if(!best)throw Error(label+' orientation alignment failed.');
   const quality=score(best,true);
-  const rotation=Math.round(best[4]*180/Math.PI);
-  report(label+': rotation '+rotation+'°, outline score '+quality.avg.toFixed(2)+
-    ', '+quality.good+'/'+quality.count+' close points, '+quality.bands+'/8 page bands.');
-  if(quality.valid/quality.count<.92||quality.avg>4.0||
-     quality.good/quality.count<.30||quality.bands<6){
-    throw Error(label+' outline alignment failed validation (rotation '+rotation+
-      '°, '+quality.good+'/'+quality.count+' close points across '+quality.bands+
-      '/8 regions). Refusing to export a damaged texture.');
+  report(label+': orientation '+Math.round(best[4]*180/Math.PI)+
+    '°, outlines '+quality.good+'/'+quality.count+
+    ', covered bands '+quality.bands+'/8, QR error '+
+    quality.qrOffset.toFixed(1)+'px.');
+  if(quality.valid/quality.count<.93||quality.bands<6||
+     quality.good/quality.count<.25||
+     quality.avg>6.2||(qr&&quality.qrOffset>35)){
+    throw Error(label+' alignment rejected: low confidence (only '+
+      quality.good+'/'+quality.count+' close outline samples; '+
+      quality.bands+'/8 bands; QR error '+quality.qrOffset.toFixed(0)+
+      'px). No texture exported.');
   }
-  return {params:best,quality};
+  return {params:best,quality,rotation:angle};
 }
 function toTemplate(x,y,params) {
   const [cx,cy,sx,sy,angle]=params,cs=Math.cos(angle),sn=Math.sin(angle);

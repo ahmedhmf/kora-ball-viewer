@@ -25,3 +25,10 @@ The confidence counts now indicate sampled **panel-edge positions** near detecte
 - Edge-based registration is still experimental. It has not been validated as producing a usable output in Chrome on the user's real three uploaded files.
 - Processing uses the browser Worker watchdog; there is no backend. PDF.js is still loaded from a CDN and may need bundling for complete offline support.
 - Cropping/edge margin may need further adjustment after successful alignment.
+
+## QR-orientation fix (test batch 2026-11-16)
+The latest uploaded WhatsApp scan is rotated 180° relative to the **printed** blank sheet: its QR code appears top-right rather than bottom-left. A unique QR-density corner landmark is now required for automatic scan orientation and serves as a geometric registration anchor. This also enables non-uniform X/Y scan scaling. If the QR landmark or enough outlines are not found, the worker rejects the output.
+
+Important: rotating the **printed page** upright does not guarantee a child's handwritten words will be upright; in this uploaded example much of the child writing was drawn upside-down relative to the print sheet. The 3D UV texture must use the template's printed orientation.
+
+The output still requires a real-browser review and may need piecewise panel-by-panel registration to correct residual camera perspective. Do not merge the feature until a complete scan passes visual validation.
