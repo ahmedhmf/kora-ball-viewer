@@ -16,3 +16,6 @@ The task is to straighten a scan and produce **one continuous 1024×1024 image**
 - QR-density fallback is only a heuristic when native BarcodeDetector is missing. Explicit rotation control prevents silent mistakes.
 - **Do not merge** the draft PR until the Angular worker output has been validated in-browser with the original uploaded scanned PDFs.
 - The original scan's handwriting orientation is preserved relative to its printed panels.
+
+## Alignment preview
+The interface overlays a static green guide outlining the 32 panel boundaries in the **known-good canonical master**. The guide is not included in the exported image. Users must confirm visual alignment before downloading. Sliders control full-page X/Y translation, width, height and fine rotation without manipulating panels individually.

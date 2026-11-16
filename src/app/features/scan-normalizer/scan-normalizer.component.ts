@@ -30,12 +30,24 @@ import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions
       }
       @if (result(); as output) {
         <div class="preview">
-          <strong>Exact output: 1024 × 1024 PNG</strong>
-          <img [src]="output.previewUrl" alt="Continuous full-sheet corrected KORA artwork">
-          <p class="quality">Reference outline score: {{output.nearEdges}} / {{output.samples}} nearby edges.
-          Check the printed logos and outer panels before export.</p>
+          <strong>Full-page output: 1024 × 1024 PNG</strong>
+          <label class="guide-label"><input type="checkbox" [checked]="showGuides()"
+            (change)="showGuides.set($any($event.target).checked)">
+            Show expected panel outlines (preview only)</label>
+          <div class="preview-stack">
+            <img [src]="output.previewUrl" alt="Continuous whole-sheet aligned artwork">
+            @if (showGuides()) {
+              <img class="guide" src="templates/kora-guides.svg"
+                alt="Expected panel outline overlay" />
+            }
+          </div>
+          <p class="quality">Outline score: {{output.nearEdges}} / {{output.samples}} near edges.
+            Inspect the green guide lines carefully; misaligned edges need adjustment.</p>
         </div>
-        <button type="button" (click)="download()">DOWNLOAD FULL TEXTURE PNG</button>
+        <label class="guide-label"><input type="checkbox" [checked]="approved()"
+          (change)="approved.set($any($event.target).checked)">
+          I checked the printed panel alignment in the preview.</label>
+        <button type="button" [disabled]="!approved()" (click)="download()">DOWNLOAD FULL TEXTURE PNG</button>
         <details>
           <summary>Fine alignment controls (no point selection)</summary>
           <p>Adjust only if the printed outlines don't match the target layout.</p>
@@ -71,7 +83,10 @@ import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions
     select{background:#252b34;color:#fff;border:1px solid #58616e;padding:6px;margin-top:5px;width:100%}
     button{padding:10px 9px;background:#b91c1c;color:#fff;border:0;border-radius:5px;font-weight:600;cursor:pointer}
     button:disabled{opacity:.45;cursor:not-allowed}
-    .preview{margin:15px 0}.preview img{display:block;width:100%;background:#fff;margin:8px 0}
+    .preview{margin:15px 0}.preview-stack{position:relative;width:100%;aspect-ratio:1;background:#fff;margin:8px 0}
+    .preview-stack img{display:block;position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .preview-stack .guide{opacity:.8;pointer-events:none}
+    .guide-label{font-size:11px;font-weight:400}.guide-label input{vertical-align:middle}
     .warning{color:#fbbf24}.status{color:white;font-weight:600;overflow-wrap:anywhere}
     details{margin-top:12px}summary{cursor:pointer;color:#ddd}.buttons{display:flex;gap:8px}
   `]
@@ -89,6 +104,8 @@ export class ScanNormalizerComponent {
   readonly scaleX=signal(100);
   readonly scaleY=signal(100);
   readonly fineRotation=signal(0);
+  readonly showGuides=signal(true);
+  readonly approved=signal(false);
 
   async load(event:Event):Promise<void>{
     const file=(event.target as HTMLInputElement).files?.[0];
@@ -150,6 +167,7 @@ export class ScanNormalizerComponent {
     anchor.click();
   }
   private clear():void{
+    this.approved.set(false);
     const old=this.result();
     if(old)URL.revokeObjectURL(old.previewUrl);
     this.result.set(null);
