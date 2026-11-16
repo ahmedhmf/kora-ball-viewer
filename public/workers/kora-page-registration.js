@@ -174,17 +174,22 @@ async function process(data){
   const quality=fit.quality;
   progress('Printed outline registration: '+quality.good+'/'+quality.total+
     ' close samples across '+quality.bands+'/8 regions; error '+quality.avg.toFixed(1)+'px.');
-  if(quality.valid/quality.total<.90 || quality.good/quality.total<.24 ||
-     quality.bands<5 || quality.avg>7.2){
+  const opts=data.options;
+  const adjusted=opts.shiftX!==0||opts.shiftY!==0||
+    Math.abs(opts.scaleX-1)>.001||Math.abs(opts.scaleY-1)>.001||
+    Math.abs(opts.fineRotation)>.001;
+  const untrusted=quality.valid/quality.total<.90||quality.good/quality.total<.24||
+    quality.bands<5||quality.avg>7.2;
+  if(untrusted&&!adjusted){
     throw Error('Whole-net registration is not reliable (only '+quality.good+'/'+
       quality.total+' close edge samples across '+quality.bands+
-      '/8 net regions). No image exported; try correcting the orientation first.');
+      '/8 net regions). Use whole-sheet adjustment controls to inspect a preview.');
   }
+  if(untrusted) progress('Low-confidence alignment: review-only preview. Check every green outline before approval.');
   progress('Part A: extracting one continuous complete football-net silhouette...');
   await tick();
   progress('Part B: placing the entire net in the canonical 1024×1024 layout...');
   await tick();
-  const opts=data.options;
   const cx=fit.best[0]+opts.shiftX*dims.width/1024;
   const cy=fit.best[1]+opts.shiftY*dims.height/1024;
   const sx=fit.best[2]*opts.scaleX,sy=fit.best[3]*opts.scaleY;
