@@ -210,6 +210,304 @@ export class BabylonEngineService implements OnDestroy {
   }
 
   /**
+   * Capture an 8-angle pack of high-resolution screenshots of the 3D ball:
+   * 1. Front view – straight at the ball
+   * 2. Back view – opposite side
+   * 3. Left side – rotated 90°
+   * 4. Right side – rotated 90° the other way
+   * 5. Top view – looking down
+   * 6. Bottom view – underneath
+   * 7. 45° diagonal view – front and side visible
+   * 8. Opposite diagonal view – showing the opposite panels
+   */
+  public async captureMultiAnglePack(
+    onProgress?: (percent: number, label: string) => void
+  ): Promise<{ name: string; fileName: string; dataUrl: string; blob: Blob }[]> {
+    if (!this.engine || !this.scene || !this.camera) {
+      throw new Error('3D Engine is not initialized');
+    }
+
+    const initialAutoRotate = this.autoRotate;
+    const initialMainRot = this.mainPivot.rotation.clone();
+    const initialChildRot = this.childPivot.rotation.clone();
+    const initialAlpha = this.camera.alpha;
+    const initialBeta = this.camera.beta;
+    const initialRadius = this.camera.radius;
+    const initialTarget = this.camera.target.clone();
+    const initialBgEnabled = this.backgroundLayer ? this.backgroundLayer.isEnabled : false;
+    const initialClearColor = this.scene.clearColor.clone();
+
+    this.autoRotate = false;
+    if (this.backgroundLayer) {
+      this.backgroundLayer.isEnabled = false;
+    }
+    this.scene.clearColor = new Color4(0, 0, 0, 0);
+
+    const views = [
+      {
+        name: 'Front View (Straight)',
+        fileName: '01_front_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: 0,
+        rotX: 0,
+        rotZ: 0,
+      },
+      {
+        name: 'Back View (Opposite Side)',
+        fileName: '02_back_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: Math.PI,
+        rotX: 0,
+        rotZ: 0,
+      },
+      {
+        name: 'Left Side (Rotated 90°)',
+        fileName: '03_left_side_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: Math.PI / 2,
+        rotX: 0,
+        rotZ: 0,
+      },
+      {
+        name: 'Right Side (Rotated -90°)',
+        fileName: '04_right_side_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: -Math.PI / 2,
+        rotX: 0,
+        rotZ: 0,
+      },
+      {
+        name: 'Top View (Looking Down)',
+        fileName: '05_top_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: 0,
+        rotX: Math.PI / 2,
+        rotZ: 0,
+      },
+      {
+        name: 'Bottom View (Underneath)',
+        fileName: '06_bottom_view.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(90),
+        rotY: 0,
+        rotX: -Math.PI / 2,
+        rotZ: 0,
+      },
+      {
+        name: '45° Diagonal View (Front & Side)',
+        fileName: '07_diagonal_front_side.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(65),
+        rotY: Math.PI / 4,
+        rotX: Math.PI / 8,
+        rotZ: 0,
+      },
+      {
+        name: 'Opposite Diagonal View (Opposite Panels)',
+        fileName: '08_diagonal_opposite_panels.png',
+        alpha: Tools.ToRadians(90),
+        beta: Tools.ToRadians(115),
+        rotY: Math.PI + Math.PI / 4,
+        rotX: -Math.PI / 8,
+        rotZ: 0,
+      },
+    ];
+
+    const results: { name: string; fileName: string; dataUrl: string; blob: Blob }[] = [];
+
+    try {
+      this.camera.setTarget(Vector3.Zero());
+      this.camera.radius = 62;
+
+      for (let i = 0; i < views.length; i++) {
+        const v = views[i];
+        if (onProgress) {
+          onProgress(Math.round((i / views.length) * 100), v.name);
+        }
+
+        this.camera.alpha = v.alpha;
+        this.camera.beta = v.beta;
+        this.mainPivot.rotation.set(0, v.rotY, 0);
+        this.childPivot.rotation.set(v.rotX, 0, v.rotZ);
+
+        // Render 2 frames to ensure matrices and transparent clear buffer are updated
+        this.scene.render();
+        this.scene.render();
+
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          try {
+            Tools.CreateScreenshot(
+              this.engine,
+              this.camera,
+              { precision: 1.5 },
+              (data) => {
+                resolve(data);
+              },
+              'image/png'
+            );
+          } catch (err) {
+            reject(err);
+          }
+        });
+
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+
+        results.push({
+          name: v.name,
+          fileName: v.fileName,
+          dataUrl,
+          blob,
+        });
+
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      if (onProgress) {
+        onProgress(100, 'Completed');
+      }
+    } finally {
+      // Restore camera, background layer, clearColor, and pivots
+      this.mainPivot.rotation.copyFrom(initialMainRot);
+      this.childPivot.rotation.copyFrom(initialChildRot);
+      this.camera.alpha = initialAlpha;
+      this.camera.beta = initialBeta;
+      this.camera.radius = initialRadius;
+      this.camera.setTarget(initialTarget);
+      if (this.backgroundLayer) {
+        this.backgroundLayer.isEnabled = initialBgEnabled;
+      }
+      this.scene.clearColor = initialClearColor;
+      this.autoRotate = initialAutoRotate;
+      this.scene.render();
+    }
+
+    return results;
+  }
+
+  /**
+   * Build a standard uncompressed ZIP archive from an array of files
+   */
+  public async createZipArchive(
+    files: { fileName: string; blob: Blob }[]
+  ): Promise<Blob> {
+    const fileEntries: {
+      nameBytes: Uint8Array;
+      data: Uint8Array;
+      crc: number;
+      offset: number;
+    }[] = [];
+
+    const encoder = new TextEncoder();
+    let offset = 0;
+
+    for (const f of files) {
+      const arrayBuffer = await f.blob.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+      const nameBytes = encoder.encode(f.fileName);
+      const crc = this.crc32(data);
+
+      fileEntries.push({
+        nameBytes,
+        data,
+        crc,
+        offset,
+      });
+
+      // Local file header (30 bytes + fileName length) + file data
+      offset += 30 + nameBytes.length + data.length;
+    }
+
+    const centralDirStart = offset;
+    let centralDirSize = 0;
+    for (const entry of fileEntries) {
+      centralDirSize += 46 + entry.nameBytes.length;
+    }
+
+    const totalSize = centralDirStart + centralDirSize + 22;
+    const zipBuffer = new ArrayBuffer(totalSize);
+    const view = new DataView(zipBuffer);
+    const bytes = new Uint8Array(zipBuffer);
+
+    let ptr = 0;
+
+    // 1. Write Local File Headers + Data
+    for (const entry of fileEntries) {
+      view.setUint32(ptr, 0x04034b50, true); // Local file header signature
+      view.setUint16(ptr + 4, 20, true); // Version needed to extract
+      view.setUint16(ptr + 6, 0, true); // General purpose bit flag
+      view.setUint16(ptr + 8, 0, true); // Compression method (0 = store)
+      view.setUint16(ptr + 10, 0, true); // Last mod file time
+      view.setUint16(ptr + 12, 0, true); // Last mod file date
+      view.setUint32(ptr + 14, entry.crc, true); // CRC-32
+      view.setUint32(ptr + 18, entry.data.length, true); // Compressed size
+      view.setUint32(ptr + 22, entry.data.length, true); // Uncompressed size
+      view.setUint16(ptr + 26, entry.nameBytes.length, true); // File name length
+      view.setUint16(ptr + 28, 0, true); // Extra field length
+      ptr += 30;
+
+      bytes.set(entry.nameBytes, ptr);
+      ptr += entry.nameBytes.length;
+
+      bytes.set(entry.data, ptr);
+      ptr += entry.data.length;
+    }
+
+    // 2. Write Central Directory Headers
+    for (const entry of fileEntries) {
+      view.setUint32(ptr, 0x02014b50, true); // Central file header signature
+      view.setUint16(ptr + 4, 20, true); // Version made by
+      view.setUint16(ptr + 6, 20, true); // Version needed to extract
+      view.setUint16(ptr + 8, 0, true); // General purpose bit flag
+      view.setUint16(ptr + 10, 0, true); // Compression method (0 = store)
+      view.setUint16(ptr + 12, 0, true); // Last mod file time
+      view.setUint16(ptr + 14, 0, true); // Last mod file date
+      view.setUint32(ptr + 16, entry.crc, true); // CRC-32
+      view.setUint32(ptr + 20, entry.data.length, true); // Compressed size
+      view.setUint32(ptr + 24, entry.data.length, true); // Uncompressed size
+      view.setUint16(ptr + 28, entry.nameBytes.length, true); // File name length
+      view.setUint16(ptr + 30, 0, true); // Extra field length
+      view.setUint16(ptr + 32, 0, true); // File comment length
+      view.setUint16(ptr + 34, 0, true); // Disk number start
+      view.setUint16(ptr + 36, 0, true); // Internal file attributes
+      view.setUint32(ptr + 38, 0, true); // External file attributes
+      view.setUint32(ptr + 42, entry.offset, true); // Relative offset of local header
+      ptr += 46;
+
+      bytes.set(entry.nameBytes, ptr);
+      ptr += entry.nameBytes.length;
+    }
+
+    // 3. Write End of Central Directory Record (EOCD)
+    view.setUint32(ptr, 0x06054b50, true); // End of central dir signature
+    view.setUint16(ptr + 4, 0, true); // Number of this disk
+    view.setUint16(ptr + 6, 0, true); // Disk where central directory starts
+    view.setUint16(ptr + 8, fileEntries.length, true); // Number of central directory records on this disk
+    view.setUint16(ptr + 10, fileEntries.length, true); // Total number of central directory records
+    view.setUint32(ptr + 12, centralDirSize, true); // Size of central directory
+    view.setUint32(ptr + 16, centralDirStart, true); // Offset of start of central directory
+    view.setUint16(ptr + 20, 0, true); // Comment length
+
+    return new Blob([zipBuffer], { type: 'application/zip' });
+  }
+
+  private crc32(data: Uint8Array): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+      crc ^= data[i];
+      for (let j = 0; j < 8; j++) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  /**
    * Export smooth 360-degree rotation video in MP4 format (H.264)
    */
   public async record360MP4Video(

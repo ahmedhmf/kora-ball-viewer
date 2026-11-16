@@ -168,6 +168,37 @@ import { ModelLoaderService } from '../../services/model-loader.service';
       <hr class="divider" />
 
       <div class="card-header">
+        <h3>EXTRACT 8-VIEW IMAGE PACK</h3>
+        <span class="badge">TRANSPARENT PNG</span>
+      </div>
+
+      <div class="pack-angles-preview">
+        <span>Front</span> • <span>Back</span> • <span>Left</span> • <span>Right</span> •
+        <span>Top</span> • <span>Bottom</span> • <span>45° Diag</span> • <span>Opp Diag</span>
+      </div>
+
+      <button
+        class="action-btn pack-btn"
+        [class.recording]="store.isExportingPack()"
+        [disabled]="store.isExportingPack() || store.isRecording()"
+        (click)="onExportImagePack()"
+      >
+        <span *ngIf="!store.isExportingPack()">
+          📦 EXTRACT 8-VIEW PNG PACK (.ZIP)
+        </span>
+        <span *ngIf="store.isExportingPack()">
+          📸 CAPTURING 8 PNG ANGLES... {{ store.packExportProgress() }}%
+        </span>
+      </button>
+
+      <!-- Pack Progress Bar -->
+      <div class="progress-bar-container" *ngIf="store.isExportingPack()">
+        <div class="progress-bar-fill" [style.width.%]="store.packExportProgress()"></div>
+      </div>
+
+      <hr class="divider" />
+
+      <div class="card-header">
         <h3>EXPORT 360° VIDEO</h3>
         <div class="format-selector">
           <button
@@ -193,7 +224,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
       <button
         class="action-btn record-btn"
         [class.recording]="store.isRecording()"
-        [disabled]="store.isRecording()"
+        [disabled]="store.isRecording() || store.isExportingPack()"
         (click)="onExport360Video()"
       >
         <span *ngIf="!store.isRecording()">
@@ -422,6 +453,35 @@ import { ModelLoaderService } from '../../services/model-loader.service';
         color: #ffffff;
       }
 
+      .pack-angles-preview {
+        font-size: 0.68rem;
+        color: #9ca3af;
+        line-height: 1.4;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 6px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .action-btn.pack-btn {
+        width: 100%;
+        background: rgba(239, 68, 68, 0.14);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.45);
+      }
+
+      .action-btn.pack-btn:hover:not(:disabled) {
+        background: #ef4444;
+        color: #ffffff;
+        box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+      }
+
+      .action-btn.pack-btn.recording {
+        background: linear-gradient(135deg, #b91c1c, #991b1b);
+        color: #ffffff;
+        animation: pulse 1.5s infinite;
+      }
+
       .action-btn.record-btn {
         width: 100%;
         margin-top: 2px;
@@ -538,6 +598,34 @@ export class ControlsPanelComponent {
       link.click();
     } catch (err) {
       console.error('Screenshot error:', err);
+    }
+  }
+
+  async onExportImagePack(): Promise<void> {
+    if (this.store.isExportingPack() || this.store.isRecording()) return;
+
+    try {
+      this.store.setIsExportingPack(true, 0);
+
+      const capturedViews = await this.babylonEngine.captureMultiAnglePack((progress, label) => {
+        this.store.setPackExportProgress(progress, label);
+      });
+
+      const zipBlob = await this.babylonEngine.createZipArchive(
+        capturedViews.map((v) => ({ fileName: v.fileName, blob: v.blob }))
+      );
+
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kora-8view-ball-pack-${Date.now()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Image pack export error:', err);
+      this.store.setStatus(`Failed to export image pack: ${err.message || err}`);
+    } finally {
+      this.store.setIsExportingPack(false);
     }
   }
 
