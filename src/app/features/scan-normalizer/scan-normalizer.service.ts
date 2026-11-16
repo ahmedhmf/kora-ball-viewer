@@ -91,7 +91,12 @@ export class ScanNormalizerService {
       const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
       try {
         const page = await doc.getPage(1);
-        const viewport = page.getViewport({ scale: 2 });
+        // WhatsApp scanner PDFs sometimes encode pages at thousands of points.
+        // Rendering those at 2× can allocate hundreds of MB and stall the worker.
+        // The 1800px cap is sufficient for a 1024px output texture.
+        const native = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 1800 / Math.max(native.width, native.height));
+        const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
