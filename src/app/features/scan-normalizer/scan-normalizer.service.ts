@@ -147,6 +147,158 @@ export class ScanNormalizerService {
     }
   }
 
+
+  /**
+   * Deterministic two-stage registration:
+   * blank print sheet -> child's scan, blank print sheet -> UV master.
+   * Child artwork is never compared directly with a different colored design.
+   */
+  async registerWithBlank(
+    scan: HTMLCanvasElement,
+    blank: HTMLCanvasElement,
+    master: HTMLCanvasElement,
+  ): Promise<RegistrationResult & { panels: number; scanInliers: number; masterInliers: number }> {
+    const cv = await this.cv();
+    const scanMatch = this.matchReference(cv, blank, scan);
+    let masterMatch: { h: any; inliers: number; total: number } | null = null;
+    let inverse: any, composite: any;
+    const source = cv.imread(scan), aligned = new cv.Mat();
+    const panelMaskSource = new cv.Mat(), panelMaskTarget = new cv.Mat();
+    const imageResult = new cv.Mat();
+    try {
+      masterMatch = this.matchReference(cv, blank, master);
+      inverse = new cv.Mat();
+      if (cv.invert(scanMatch.h, inverse, cv.DECOMP_LU) === 0)
+        throw new Error('Could not invert scan alignment');
+      composite = new cv.Mat();
+      cv.gemm(masterMatch.h, inverse, 1, new cv.Mat(), 0, composite);
+      cv.warpPerspective(source, aligned, composite, new cv.Size(1024, 1024),
+        cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+
+      // Extract closed 5/6-sided printable panels from the BLANK reference.
+      // This excludes page text, QR, and contact details without guessing their location on a scan.
+      const blankMat = cv.imread(blank);
+      const gray = new cv.Mat(), binary = new cv.Mat();
+      const contours = new cv.MatVector(), hierarchy = new cv.Mat();
+      panelMaskSource.create(blank.height, blank.width, cv.CV_8UC1);
+      panelMaskSource.setTo(new cv.Scalar(0));
+      let panels = 0;
+      try {
+        cv.cvtColor(blankMat, gray, cv.COLOR_RGBA2GRAY);
+        cv.threshold(gray, binary, 238, 255, cv.THRESH_BINARY_INV);
+        cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        const scale = blank.height / 1024;
+        for (let i = 0; i < contours.size(); i++) {
+          const contour = contours.get(i);
+          const poly = new cv.Mat();
+          try {
+            const area = cv.contourArea(contour);
+            cv.approxPolyDP(contour, poly, 0.025 * cv.arcLength(contour, true), true);
+            const box = cv.boundingRect(contour);
+            if (area < 3500 * scale * scale || area > 12500 * scale * scale ||
+                poly.rows < 5 || poly.rows > 8 ||
+                box.width < 50 * scale || box.height < 55 * scale ||
+                box.x < blank.width * 0.09 || box.x + box.width > blank.width * 0.94 ||
+                box.y < blank.height * 0.025 || box.y + box.height > blank.height * 0.97) continue;
+            const polygon = new cv.MatVector();
+            polygon.push_back(poly);
+            try {
+              cv.fillPoly(panelMaskSource, polygon, new cv.Scalar(255));
+              panels++;
+            } finally { polygon.delete(); }
+          } finally { poly.delete(); contour.delete(); }
+        }
+      } finally {
+        blankMat.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete();
+      }
+      if (panels < 28 || panels > 35)
+        throw new Error(`Expected about 32 closed panels in the blank PDF; detected ${panels}. Try an unmodified KORA blank sheet.`);
+
+      cv.warpPerspective(panelMaskSource, panelMaskTarget, masterMatch.h,
+        new cv.Size(1024, 1024), cv.INTER_NEAREST, cv.BORDER_CONSTANT, new cv.Scalar(0));
+      imageResult.create(1024, 1024, cv.CV_8UC4);
+      imageResult.setTo(new cv.Scalar(255, 255, 255, 255));
+      aligned.copyTo(imageResult, panelMaskTarget);
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024; canvas.height = 1024;
+      cv.imshow(canvas, imageResult);
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(data => data ? resolve(data) : reject(new Error('Could not export PNG')), 'image/png'));
+      return { blob, previewUrl: URL.createObjectURL(blob), method: 'automatic',
+        inliers: scanMatch.inliers + masterMatch.inliers,
+        matches: scanMatch.total + masterMatch.total,
+        scanInliers: scanMatch.inliers, masterInliers: masterMatch.inliers, panels };
+    } finally {
+      scanMatch.h.delete(); masterMatch?.h.delete();
+      inverse?.delete(); composite?.delete(); source.delete(); aligned.delete();
+      panelMaskSource.delete(); panelMaskTarget.delete(); imageResult.delete();
+    }
+  }
+
+  private matchReference(cv: any, reference: HTMLCanvasElement, target: HTMLCanvasElement):
+      { h: any; inliers: number; total: number } {
+    // ORB works here because the blank PDF and the child's scan share the same
+    // printed contour geometry and page labels even when ink covers some features.
+    const a = cv.imread(reference), b = cv.imread(target);
+    const ag = new cv.Mat(), bg = new cv.Mat();
+    const k1 = new cv.KeyPointVector(), k2 = new cv.KeyPointVector();
+    const d1 = new cv.Mat(), d2 = new cv.Mat();
+    const matches = new cv.DMatchVectorVector();
+    let orb: any, matcher: any;
+    try {
+      cv.cvtColor(a, ag, cv.COLOR_RGBA2GRAY); cv.cvtColor(b, bg, cv.COLOR_RGBA2GRAY);
+      orb = new cv.ORB(4000);
+      orb.detectAndCompute(ag, new cv.Mat(), k1, d1);
+      orb.detectAndCompute(bg, new cv.Mat(), k2, d2);
+      if (d1.empty() || d2.empty()) throw new Error('Not enough recognizable features');
+      matcher = new cv.BFMatcher(cv.NORM_HAMMING, false);
+      matcher.knnMatch(d1, d2, matches, 2);
+      const s: number[] = [], t: number[] = [];
+      for (let i = 0; i < matches.size(); i++) {
+        const pair = matches.get(i);
+        try {
+          if (pair.size() < 2) continue;
+          const best = pair.get(0), next = pair.get(1);
+          if (best.distance >= .70 * next.distance) continue;
+          const from = k1.get(best.queryIdx).pt, to = k2.get(best.trainIdx).pt;
+          s.push(from.x, from.y); t.push(to.x, to.y);
+        } finally { pair.delete(); }
+      }
+      if (s.length < 24) throw new Error('Could not recognize enough printed outline features');
+      const src = cv.matFromArray(s.length / 2, 1, cv.CV_32FC2, s);
+      const dst = cv.matFromArray(t.length / 2, 1, cv.CV_32FC2, t);
+      const mask = new cv.Mat();
+      try {
+        const h = cv.findHomography(src, dst, cv.RANSAC, 4, mask);
+        const inliers = cv.countNonZero(mask);
+        if (h.empty() || inliers < 12 || inliers / (s.length / 2) < 0.24) {
+          h.delete();
+          throw new Error('Low-confidence template matching. Please use a clearer scan.');
+        }
+        // Reject plausible-looking but wildly distorted homographies.
+        const corners = cv.matFromArray(4, 1, cv.CV_32FC2,
+          [0,0,reference.width,0,reference.width,reference.height,0,reference.height]);
+        const warped = new cv.Mat();
+        try {
+          cv.perspectiveTransform(corners, warped, h);
+          for (let i = 0; i < 4; i++) {
+            const x = warped.data32F[i * 2], y = warped.data32F[i * 2 + 1];
+            if (!Number.isFinite(x) || !Number.isFinite(y) ||
+                x < -target.width * .7 || y < -target.height * .7 ||
+                x > target.width * 1.7 || y > target.height * 1.7) {
+              h.delete(); throw new Error('Template alignment distortion is too large');
+            }
+          }
+        } finally { corners.delete(); warped.delete(); }
+        return { h, inliers, total: s.length / 2 };
+      } finally { src.delete(); dst.delete(); mask.delete(); }
+    } finally {
+      a.delete(); b.delete(); ag.delete(); bg.delete();
+      k1.delete(); k2.delete(); d1.delete(); d2.delete(); matches.delete();
+      orb?.delete(); matcher?.delete();
+    }
+  }
+
   private findAutomaticTransform(cv: any, scan: HTMLCanvasElement, master: HTMLCanvasElement):
       { transform: any; inliers: number; matches: number } | null {
     // Use a coarse-to-fine keypoint registration. Never accept a weak homography.
