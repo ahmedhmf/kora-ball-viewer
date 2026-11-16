@@ -175,95 +175,81 @@ export class ScanNormalizerService {
    * blank print sheet -> child's scan, blank print sheet -> UV master.
    * Child artwork is never compared directly with a different colored design.
    */
+  /**
+   * Run CPU-heavy OpenCV in a dedicated worker. A watchdog can terminate a stuck
+   * WebAssembly operation without freezing Angular or permanently disabling the UI.
+   */
   async registerWithBlank(
     scan: HTMLCanvasElement,
     blank: HTMLCanvasElement,
     master: HTMLCanvasElement,
     reportProgress: (message: string) => void = () => {},
   ): Promise<RegistrationResult & { panels: number; scanInliers: number; masterInliers: number }> {
-    reportProgress('Loading image-processing library...');
-    const cv = await this.cv();
-    reportProgress('Matching blank sheet to the child scan...');
-    // Yield once so Angular can paint the progress text before synchronous WASM processing.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const scanMatch = this.matchReference(cv, blank, scan);
-    let masterMatch: { h: any; inliers: number; total: number } | null = null;
-    let inverse: any, composite: any;
-    const source = cv.imread(scan), aligned = new cv.Mat();
-    const panelMaskSource = new cv.Mat(), panelMaskTarget = new cv.Mat();
-    const imageResult = new cv.Mat();
-    try {
-      reportProgress('Matching blank sheet to the 1024px texture...');
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      masterMatch = this.matchReference(cv, blank, master);
-      inverse = new cv.Mat();
-      if (cv.invert(scanMatch.h, inverse, cv.DECOMP_LU) === 0)
-        throw new Error('Could not invert scan alignment');
-      composite = new cv.Mat();
-      cv.gemm(masterMatch.h, inverse, 1, new cv.Mat(), 0, composite);
-      cv.warpPerspective(source, aligned, composite, new cv.Size(1024, 1024),
-        cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
-
-      reportProgress('Extracting printable panels and composing the PNG...');
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      // Extract closed 5/6-sided printable panels from the BLANK reference.
-      // This excludes page text, QR, and contact details without guessing their location on a scan.
-      const blankMat = cv.imread(blank);
-      const gray = new cv.Mat(), binary = new cv.Mat();
-      const contours = new cv.MatVector(), hierarchy = new cv.Mat();
-      panelMaskSource.create(blank.height, blank.width, cv.CV_8UC1);
-      panelMaskSource.setTo(new cv.Scalar(0));
-      let panels = 0;
-      try {
-        cv.cvtColor(blankMat, gray, cv.COLOR_RGBA2GRAY);
-        cv.threshold(gray, binary, 238, 255, cv.THRESH_BINARY_INV);
-        cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-        const scale = blank.height / 1024;
-        for (let i = 0; i < contours.size(); i++) {
-          const contour = contours.get(i);
-          const poly = new cv.Mat();
+    const image = (canvas: HTMLCanvasElement): ImageData =>
+      canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
+    reportProgress('Preparing images for background processing...');
+    const scanData = image(scan), blankData = image(blank), masterData = image(master);
+    const worker = new Worker('/workers/kora-scan-worker.js?v=2');
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        if (watchdog) clearTimeout(watchdog);
+        worker.terminate();
+      };
+      const finish = (error?: Error, result?: RegistrationResult & {
+        panels: number; scanInliers: number; masterInliers: number;
+      }) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(result!);
+      };
+      const resetWatchdog = () => {
+        if (watchdog) clearTimeout(watchdog);
+        watchdog = setTimeout(() => finish(new Error(
+          'Processing timed out or the OpenCV worker stopped responding. Please retry or use a smaller scan.'
+        )), 45000);
+      };
+      worker.onerror = (event) => {
+        finish(new Error('Background scan worker failed: ' + (event.message || 'unknown error')));
+      };
+      worker.onmessage = (event: MessageEvent) => {
+        const msg = event.data;
+        if (msg?.type === 'progress') {
+          reportProgress(msg.message);
+          resetWatchdog();
+        } else if (msg?.type === 'error') {
+          finish(new Error(msg.message || 'Background processing failed'));
+        } else if (msg?.type === 'complete') {
           try {
-            const area = cv.contourArea(contour);
-            cv.approxPolyDP(contour, poly, 0.025 * cv.arcLength(contour, true), true);
-            const box = cv.boundingRect(contour);
-            if (area < 3500 * scale * scale || area > 12500 * scale * scale ||
-                poly.rows < 5 || poly.rows > 8 ||
-                box.width < 50 * scale || box.height < 55 * scale ||
-                box.x < blank.width * 0.09 || box.x + box.width > blank.width * 0.94 ||
-                box.y < blank.height * 0.025 || box.y + box.height > blank.height * 0.97) continue;
-            const polygon = new cv.MatVector();
-            polygon.push_back(poly);
-            try {
-              cv.fillPoly(panelMaskSource, polygon, new cv.Scalar(255));
-              panels++;
-            } finally { polygon.delete(); }
-          } finally { poly.delete(); contour.delete(); }
+            const pixels = new ImageData(new Uint8ClampedArray(msg.pixels), 1024, 1024);
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 1024;
+            canvas.getContext('2d')!.putImageData(pixels, 0, 0);
+            canvas.toBlob((blob) => {
+              if (!blob) return finish(new Error('Could not export PNG'));
+              finish(undefined, {
+                blob, previewUrl: URL.createObjectURL(blob), method: 'automatic',
+                inliers: msg.scanInliers + msg.masterInliers,
+                matches: msg.scanMatches + msg.masterMatches,
+                panels: msg.panels, scanInliers: msg.scanInliers, masterInliers: msg.masterInliers,
+              });
+            }, 'image/png');
+          } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
         }
-      } finally {
-        blankMat.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete();
-      }
-      if (panels < 28 || panels > 35)
-        throw new Error(`Expected about 32 closed panels in the blank PDF; detected ${panels}. Try an unmodified KORA blank sheet.`);
-
-      cv.warpPerspective(panelMaskSource, panelMaskTarget, masterMatch.h,
-        new cv.Size(1024, 1024), cv.INTER_NEAREST, cv.BORDER_CONSTANT, new cv.Scalar(0));
-      imageResult.create(1024, 1024, cv.CV_8UC4);
-      imageResult.setTo(new cv.Scalar(255, 255, 255, 255));
-      aligned.copyTo(imageResult, panelMaskTarget);
-      const canvas = document.createElement('canvas');
-      canvas.width = 1024; canvas.height = 1024;
-      cv.imshow(canvas, imageResult);
-      const blob = await new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob(data => data ? resolve(data) : reject(new Error('Could not export PNG')), 'image/png'));
-      return { blob, previewUrl: URL.createObjectURL(blob), method: 'automatic',
-        inliers: scanMatch.inliers + masterMatch.inliers,
-        matches: scanMatch.total + masterMatch.total,
-        scanInliers: scanMatch.inliers, masterInliers: masterMatch.inliers, panels };
-    } finally {
-      scanMatch.h.delete(); masterMatch?.h.delete();
-      inverse?.delete(); composite?.delete(); source.delete(); aligned.delete();
-      panelMaskSource.delete(); panelMaskTarget.delete(); imageResult.delete();
-    }
+      };
+      resetWatchdog();
+      try {
+        worker.postMessage({
+          type: 'normalize',
+          scan: { width: scanData.width, height: scanData.height, pixels: scanData.data.buffer },
+          blank: { width: blankData.width, height: blankData.height, pixels: blankData.data.buffer },
+          master: { width: masterData.width, height: masterData.height, pixels: masterData.data.buffer },
+        }, [scanData.data.buffer, blankData.data.buffer, masterData.data.buffer]);
+      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    });
   }
 
   private matchReference(cv: any, reference: HTMLCanvasElement, target: HTMLCanvasElement):

@@ -62,6 +62,8 @@ export class ScanNormalizerComponent {
   scanInliers = 0;
   masterInliers = 0;
   busy = false;
+  currentStep = '';
+  private operationId = 0;
   status = 'Choose the colored scan, the original blank PDF and the known-working 1024×1024 texture.';
   async load(event: Event, kind: 'scan' | 'blank' | 'master'): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
@@ -78,11 +80,12 @@ export class ScanNormalizerComponent {
   async normalize(): Promise<void> {
     if (!this.scan || !this.blank || !this.master || this.busy) return;
     this.busy = true;
+    const id = ++this.operationId;
     this.clearResult();
-    this.status = 'Matching blank page to scan and UV target...';
+    this.status = 'Starting background processing...';
     try {
       const res = await this.processor.registerWithBlank(this.scan, this.blank, this.master,
-        (message) => { this.status = message; });
+        (message) => { if (id === this.operationId) this.status = message; });
       this.result = res;
       this.panelCount = res.panels;
       this.scanInliers = res.scanInliers;
