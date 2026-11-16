@@ -194,7 +194,8 @@ export class ScanNormalizerService {
         page.setRotation(degrees((((existing + angle) % 360) + 360) % 360));
       }
       const bytes = await document.save();
-      return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+      const pdfBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      return new Blob([pdfBuffer], { type: 'application/pdf' });
     }
     const result = this.rotatePreview(source, angle);
     return new Promise((resolve, reject) => result.toBlob(
