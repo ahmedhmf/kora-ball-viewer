@@ -129,7 +129,7 @@ export class ScanNormalizerService {
   ): Promise<NormalizedPage> {
     const rgba=original.getContext('2d',{willReadFrequently:true})!.getImageData(
       0,0,original.width,original.height);
-    const worker=new Worker('/workers/kora-page-registration.js?v=2');
+    const worker=new Worker('/workers/kora-page-registration.js?v=3');
     return new Promise((resolve,reject)=>{
       let finished=false;
       let stage='Starting registration';
