@@ -166,8 +166,12 @@ function fitSheet(blank,target,label) {
     return sum/count+qrOffset*.11;
   };
   let best=null,bestValue=Infinity;
-  const sxCandidates=isTexture?[1.0,1.1,1.17]:[.66,.8,.95,1.1];
-  const syCandidates=isTexture?[1.0,1.1,1.17]:[.75,.9,1.05,1.2];
+  // The reference is 725 × 1024, but PDF.js chooses a raster resolution
+  // based on the document. Scale all initial guesses and constraints with
+  // the actual scan dimensions, not a hardcoded 1024px page.
+  const unitX=isTexture?1:w/725,unitY=isTexture?1:h/1024;
+  const sxCandidates=(isTexture?[1.0,1.1,1.17]:[.66,.8,.95,1.1]).map(v=>v*unitX);
+  const syCandidates=(isTexture?[1.0,1.1,1.17]:[.75,.9,1.05,1.2]).map(v=>v*unitY);
   for(const xs of sxCandidates)for(const ys of syCandidates){
     const cx=qr?qr.position[0]-xs*(xRef*Math.cos(angle)-yRef*Math.sin(angle)):w*.5;
     const cy=qr?qr.position[1]-ys*(xRef*Math.sin(angle)+yRef*Math.cos(angle)):h*.5;
@@ -183,8 +187,8 @@ function fitSheet(blank,target,label) {
         for(let j=0;j<5;j++)for(const direction of [-1,1]){
           const next=candidate.slice();
           next[j]+=step[j]*direction;
-          if(next[2]<.48||next[2]>1.4||
-             next[3]<.55||next[3]>1.4||
+          if(next[2]<.48*unitX||next[2]>1.45*unitX||
+             next[3]<.55*unitY||next[3]>1.45*unitY||
              Math.abs(next[4]-angle)>.11)continue;
           const v=score(next);
           if(v<value){candidate=next;value=v;changed=true;}
