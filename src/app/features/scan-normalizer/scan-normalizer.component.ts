@@ -81,14 +81,15 @@ export class ScanNormalizerComponent {
     this.clearResult();
     this.status = 'Matching blank page to scan and UV target...';
     try {
-      const res = await this.processor.registerWithBlank(this.scan, this.blank, this.master);
+      const res = await this.processor.registerWithBlank(this.scan, this.blank, this.master,
+        (message) => { this.status = message; });
       this.result = res;
       this.panelCount = res.panels;
       this.scanInliers = res.scanInliers;
       this.masterInliers = res.masterInliers;
       this.status = 'Automatic registration complete. Review the preview.';
     } catch (error) {
-      this.status = 'Automatic registration failed: ' + String(error);
+      this.status = 'Automatic registration failed: ' + String(error) + '. You can retry after checking your files.';
     } finally { this.busy = false; }
   }
   private clearResult(): void {
