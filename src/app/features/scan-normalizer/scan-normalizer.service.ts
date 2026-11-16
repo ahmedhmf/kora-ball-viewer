@@ -189,7 +189,7 @@ export class ScanNormalizerService {
       canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
     reportProgress('Preparing images for background processing...');
     const scanData = image(scan), blankData = image(blank), masterData = image(master);
-    const worker = new Worker('/workers/kora-scan-worker.js?v=7');
+    const worker = new Worker('/workers/kora-scan-worker.js?v=8');
     return new Promise((resolve, reject) => {
       let settled = false;
       let watchdog: ReturnType<typeof setTimeout> | undefined;
