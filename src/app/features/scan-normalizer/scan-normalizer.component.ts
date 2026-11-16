@@ -41,8 +41,8 @@ import { ScanNormalizerService, RegistrationResult } from './scan-normalizer.ser
         <div class="result">
           <strong>1024×1024 registered texture</strong>
           <img [src]="output.previewUrl" alt="Automatically aligned child artwork on football net" />
-          <p>Detected {{ panelCount() }} panels. Alignment:
-            {{ scanInliers() }} scan matches, {{ masterInliers() }} texture matches.</p>
+          <p>Detected {{ panelCount() }} panels. Outline checks:
+            {{ scanInliers() }} scan edges, {{ masterInliers() }} texture edges aligned.</p>
           <p class="warning">Inspect panel positions on the ball before final use.
             Automatic registration does not correct curved or folded paper.</p>
           <div class="actions">
