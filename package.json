@@ -9,7 +9,8 @@
     "start": "node scripts/set-env.js && ng serve",
     "build": "node scripts/set-env.js && ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "test:net-geometry": "node scripts/test-kora-net-geometry.mjs"
   },
   "private": true,
   "packageManager": "npm@11.13.0",
