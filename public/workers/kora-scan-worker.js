@@ -43,8 +43,8 @@ function detect(js, packet) {
   const corners = [];
   // JSFeat writes detected keypoints into caller-allocated slots.
   for(let i=0;i<20000;i++)corners.push(new js.keypoint_t(0,0,0,0));
-  js.fast_corners.set_threshold(20);
-  let n=js.fast_corners.detect(gray,corners,20);
+  js.fast_corners.set_threshold(15);
+  let n=js.fast_corners.detect(gray,corners,15);
   if(n<30)throw Error('Could not find enough corners on a print. Check scan quality.');
   corners.length=n;
   corners.sort((a,b)=>b.score-a.score);
@@ -72,42 +72,77 @@ function hamming(a, ai, b, bi) {
   return count;
 }
 function estimate(js, source, target) {
-  const a=detect(js,source),b=detect(js,target);
-  const src=[],dst=[],ratios=[];
-  // Ratio test + reverse nearest check rejects repetitive polygon edges.
-  const reverse=new Int32Array(b.keypoints.length).fill(-1);
-  const reverseScore=new Int16Array(b.keypoints.length).fill(32767);
-  for(let j=0;j<b.keypoints.length;j++)
-    for(let i=0;i<a.keypoints.length;i++){
-      const d=hamming(a,i,b,j);
-      if(d<reverseScore[j]){reverseScore[j]=d;reverse[j]=i;}
+  const a = detect(js, source), b = detect(js, target);
+  const candidates = [];
+  // The source and target share the printed net, even if the child's coloring
+  // changes most ORB descriptors. Ratio-test matching with a geometric gate
+  // retains substantially more real correspondences than mutual-nearest matching.
+  // The blank reference is page-shaped; the square master has white side margins.
+  const targetIsMaster = target.width / target.height > .90;
+  for (let i = 0; i < a.keypoints.length; i++) {
+    let best = 999, second = 999, jBest = -1;
+    const p = a.keypoints[i];
+    const px = p.x * a.xScale, py = p.y * a.yScale;
+    const expectedX = targetIsMaster
+      ? px * target.height / source.height + (target.width - source.width * target.height / source.height) / 2
+      : px * target.width / source.width;
+    const expectedY = py * target.height / source.height;
+    for (let j = 0; j < b.keypoints.length; j++) {
+      const q = b.keypoints[j];
+      const qx = q.x * b.xScale, qy = q.y * b.yScale;
+      // Reject matches to completely different parts of this highly repetitive net.
+      if (Math.abs(qx - expectedX) > target.width * .30 ||
+          Math.abs(qy - expectedY) > target.height * .24) continue;
+      const d = hamming(a, i, b, j);
+      if (d < best) { second = best; best = d; jBest = j; }
+      else if (d < second) second = d;
     }
-  for(let i=0;i<a.keypoints.length;i++){
-    let best=999,second=999,jBest=-1;
-    for(let j=0;j<b.keypoints.length;j++){
-      const d=hamming(a,i,b,j);
-      if(d<best){second=best;best=d;jBest=j;}
-      else if(d<second)second=d;
-    }
-    if(jBest<0||best>90||best>=.78*second||reverse[jBest]!==i)continue;
-    const p=a.keypoints[i],q=b.keypoints[jBest];
-    src.push({x:p.x*a.xScale,y:p.y*a.yScale});
-    dst.push({x:q.x*b.xScale,y:q.y*b.yScale});
-    ratios.push(best);
+    if (jBest < 0 || best > 125 || best >= .91 * second) continue;
+    const q = b.keypoints[jBest];
+    candidates.push({ from: {x: px, y: py},
+      to: {x: q.x * b.xScale, y: q.y * b.yScale}, score: best });
   }
-  const n=src.length;
-  if(n<13)throw Error('Only '+n+' reliable matches. This scan needs better feature registration.');
-  const H=new js.matrix_t(3,3,js.F32_t|js.C1_t);
-  const mask=new js.matrix_t(n,1,js.U8_t|js.C1_t);
-  const kernel=new js.motion_model.homography2d();
-  const ok=js.motion_estimator.ransac(new js.ransac_params_t(4,5,.6,.99),
-    kernel,src,dst,n,H,mask,700);
-  const inliers=Array.from(mask.data).slice(0,n).filter(Boolean).length;
-  if(!ok||inliers<10||inliers/n<.22)
-    throw Error('Automatic alignment confidence too low: '+inliers+'/'+n+' matching points.');
-  const m=Array.from(H.data.slice(0,9));
-  if(!m.every(Number.isFinite))throw Error('Feature alignment returned invalid coordinates.');
-  return {H,matchCount:n,inliers};
+  candidates.sort((a, b) => a.score - b.score);
+  // Keep every unique source and target descriptor at most once.
+  const unique = [], destinationBins = new Set();
+  for (const item of candidates) {
+    const key = Math.round(item.to.x / 4) + ',' + Math.round(item.to.y / 4);
+    if (destinationBins.has(key)) continue;
+    destinationBins.add(key);
+    unique.push(item);
+    if (unique.length >= 350) break;
+  }
+  const count = unique.length;
+  stage('Found ' + count + ' candidate outline matches; checking geometric consistency...');
+  if (count < 12) throw Error('Only ' + count +
+    ' candidate matches even after relaxed matching. The two pages may have different orientations.');
+  const src = unique.map(m => m.from), dst = unique.map(m => m.to);
+  const H = new js.matrix_t(3, 3, js.F32_t | js.C1_t);
+  const mask = new js.matrix_t(count, 1, js.U8_t | js.C1_t);
+  const kernel = new js.motion_model.homography2d();
+  const ok = js.motion_estimator.ransac(
+    new js.ransac_params_t(4, 6, .75, .99),
+    kernel, src, dst, count, H, mask, 1200
+  );
+  const inliers = Array.from(mask.data).slice(0, count).filter(Boolean).length;
+  if (!ok || inliers < 10 || inliers / count < .14)
+    throw Error('Automatic registration needs more consistent panel matches: ' +
+      inliers + ' of ' + count + ' candidates agreed.');
+  const matrix = Array.from(H.data.slice(0, 9));
+  if (!matrix.every(Number.isFinite))
+    throw Error('Registration generated invalid perspective coordinates.');
+  // Check mapped page center and four corners against the target bounds.
+  const checks = [[0,0],[source.width,0],[source.width,source.height],
+    [0,source.height],[source.width/2,source.height/2]];
+  const mapped = checks.map(([x,y]) => apply(matrix,x,y));
+  for (const [x,y] of mapped) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) ||
+        x < -target.width * .65 || x > target.width * 1.65 ||
+        y < -target.height * .65 || y > target.height * 1.65)
+      throw Error('Registration was rejected because the projected page is distorted.');
+  }
+  stage('Confirmed ' + inliers + ' consistent matches out of ' + count + ' candidates.');
+  return {H,matchCount:count,inliers};
 }
 function apply(M,x,y) {
   const d=M[6]*x+M[7]*y+M[8];
