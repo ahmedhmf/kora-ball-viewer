@@ -120,10 +120,10 @@ function makePanelMask() {
   for(let i=0;i<mask.length;i++)mask[i]=rgba[i*4]>100?1:0;
   return mask;
 }
-function sampleBilinear(scan, x, y, out, oi) {
+function sampleBilinear(scan, sourcePixels, x, y, out, oi) {
   const sw=scan.width,sh=scan.height;
   if(x<0||y<0||x>=sw-1||y>=sh-1)return;
-  const px=new Uint8ClampedArray(scan.pixels);
+  const px=sourcePixels;
   const a=Math.floor(x),b=Math.floor(y),tx=x-a,ty=y-b;
   const i=(b*sw+a)*4,j=i+sw*4;
   for(let c=0;c<3;c++){
@@ -153,6 +153,7 @@ async function process(payload) {
   await new Promise(r=>setTimeout(r,0));
   const panelMask=makePanelMask();
   const pixels=new Uint8ClampedArray(1024*1024*4);
+  const scanPixels=new Uint8ClampedArray(scan.pixels);
   pixels.fill(255);
   for(let y=0;y<1024;y++){
     if(y%128===0)await new Promise(r=>setTimeout(r,0));
@@ -163,7 +164,7 @@ async function process(payload) {
       const xx=Math.round(bx*725/blank.width),yy=Math.round(by*1024/blank.height);
       if(xx<0||xx>=725||yy<0||yy>=1024||panelMask[yy*725+xx]===0)continue;
       const [sx,sy]=apply(outputToScan,mx,my);
-      sampleBilinear(scan,sx,sy,pixels,(y*1024+x)*4);
+      sampleBilinear(scan,scanPixels,sx,sy,pixels,(y*1024+x)*4);
     }
   }
   self.postMessage({type:'complete',pixels:pixels.buffer,panels:32,
