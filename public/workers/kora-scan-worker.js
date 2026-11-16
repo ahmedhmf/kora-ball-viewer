@@ -3,14 +3,14 @@
  * The Angular caller enforces a 45-second watchdog and can terminate this worker.
  */
 'use strict';
-const CV_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
+const CV_URL = '/vendor/opencv.js';
 const report = (message) => self.postMessage({type:'progress',message});
 const fail = (error) => self.postMessage({type:'error',message:String(error && error.message || error)});
 let cvPromise;
 async function loadCV() {
   if (cvPromise) return cvPromise;
   cvPromise = (async () => {
-    report('OpenCV: downloading pinned 4.10.0 build...');
+    report('OpenCV: loading locally bundled 4.10.0 build...');
     // OpenCV.js Emscripten builds may expose a Promise or an asynchronous Module.
     // Set the Module startup callback before importScripts to support both forms.
     let initialized = false;
@@ -27,7 +27,7 @@ async function loadCV() {
       try {
         importScripts(CV_URL);
       } catch (error) {
-        throw new Error('Cannot load OpenCV from ' + CV_URL + ': ' + String(error));
+        throw new Error('Cannot load local OpenCV asset ' + CV_URL + ': ' + String(error));
       }
     }
     report('OpenCV: script loaded; initializing WebAssembly...');
