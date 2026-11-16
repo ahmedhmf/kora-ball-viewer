@@ -3,28 +3,56 @@
  * The Angular caller enforces a 45-second watchdog and can terminate this worker.
  */
 'use strict';
-const CV_URL = 'https://docs.opencv.org/4.x/opencv.js';
+const CV_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
 const report = (message) => self.postMessage({type:'progress',message});
 const fail = (error) => self.postMessage({type:'error',message:String(error && error.message || error)});
 let cvPromise;
 async function loadCV() {
   if (cvPromise) return cvPromise;
   cvPromise = (async () => {
-    report('Loading OpenCV in a background worker...');
-    if (!self.cv) importScripts(CV_URL);
-    let api = self.cv;
-    if (api && typeof api.then === 'function') api = await api;
-    if (!api || typeof api.imread !== 'function') {
-      api = await new Promise((resolve, reject) => {
-        const start = Date.now();
-        const poll = () => {
-          if (self.cv && typeof self.cv.imread === 'function') resolve(self.cv);
-          else if (Date.now() - start > 20000) reject(new Error('OpenCV initialization failed in worker'));
-          else setTimeout(poll, 100);
-        };
-        poll();
-      });
+    report('OpenCV: downloading pinned 4.10.0 build...');
+    // OpenCV.js Emscripten builds may expose a Promise or an asynchronous Module.
+    // Set the Module startup callback before importScripts to support both forms.
+    let initialized = false;
+    let initializedResolve;
+    const initializedPromise = new Promise(resolve => { initializedResolve = resolve; });
+    self.Module = {
+      onRuntimeInitialized() {
+        initialized = true;
+        initializedResolve();
+      },
+      onAbort(reason) { fail(new Error('OpenCV WASM aborted: ' + reason)); },
+    };
+    if (!self.cv) {
+      try {
+        importScripts(CV_URL);
+      } catch (error) {
+        throw new Error('Cannot load OpenCV from ' + CV_URL + ': ' + String(error));
+      }
     }
+    report('OpenCV: script loaded; initializing WebAssembly...');
+    const candidate = self.cv;
+    if (!candidate) throw new Error('OpenCV script loaded but did not register a cv module');
+    let api = candidate;
+    if (typeof candidate.then === 'function') {
+      api = await Promise.race([
+        Promise.resolve(candidate),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('OpenCV WASM initialization exceeded 20 seconds')), 20000)),
+      ]);
+    } else if (typeof candidate.Mat !== 'function') {
+      await Promise.race([
+        initializedPromise,
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('OpenCV runtime callback was not called')), 20000)),
+      ]);
+      api = self.cv;
+    }
+    if (!api || typeof api.Mat !== 'function' ||
+        typeof api.ORB !== 'function' || typeof api.findHomography !== 'function') {
+      throw new Error('OpenCV loaded without the required feature-matching APIs');
+    }
+    report('OpenCV: ready; starting registration...');
     return api;
   })();
   return cvPromise;

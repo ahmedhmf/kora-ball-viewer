@@ -189,10 +189,12 @@ export class ScanNormalizerService {
       canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
     reportProgress('Preparing images for background processing...');
     const scanData = image(scan), blankData = image(blank), masterData = image(master);
-    const worker = new Worker('/workers/kora-scan-worker.js?v=2');
+    const worker = new Worker('/workers/kora-scan-worker.js?v=3');
     return new Promise((resolve, reject) => {
       let settled = false;
       let watchdog: ReturnType<typeof setTimeout> | undefined;
+      let lastStage = 'Starting worker';
+      const startedAt = Date.now();
       const cleanup = () => {
         if (watchdog) clearTimeout(watchdog);
         worker.terminate();
@@ -209,7 +211,8 @@ export class ScanNormalizerService {
       const resetWatchdog = () => {
         if (watchdog) clearTimeout(watchdog);
         watchdog = setTimeout(() => finish(new Error(
-          'Processing timed out or the OpenCV worker stopped responding. Please retry or use a smaller scan.'
+          'Worker stopped at: ' + lastStage + ' (' + Math.round((Date.now() - startedAt) / 1000) + 's). ' +
+          'Check OpenCV loading if this is a startup stage; otherwise try a smaller scan.'
         )), 45000);
       };
       worker.onerror = (event) => {
@@ -218,7 +221,8 @@ export class ScanNormalizerService {
       worker.onmessage = (event: MessageEvent) => {
         const msg = event.data;
         if (msg?.type === 'progress') {
-          reportProgress(msg.message);
+          lastStage = String(msg.message);
+          reportProgress(lastStage);
           resetWatchdog();
         } else if (msg?.type === 'error') {
           finish(new Error(msg.message || 'Background processing failed'));
