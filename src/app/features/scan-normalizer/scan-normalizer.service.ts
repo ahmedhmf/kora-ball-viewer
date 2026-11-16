@@ -58,7 +58,13 @@ export class ScanNormalizerService {
     return this.cvPromise ??= (async () => {
       if (!(window as any).cv) await this.script(this.cvUrl);
       let cv = (window as any).cv;
-      if (typeof cv?.then === 'function') cv = await cv;
+      if (typeof cv?.then === 'function') {
+        cv = await Promise.race([
+          cv,
+          new Promise<never>((_, reject) => setTimeout(
+            () => reject(new Error('OpenCV startup timed out. Try reloading the page.')), 25000)),
+        ]);
+      }
       if (typeof cv?.getPerspectiveTransform !== 'function') {
         await new Promise<void>((resolve, reject) => {
           const start = Date.now();
