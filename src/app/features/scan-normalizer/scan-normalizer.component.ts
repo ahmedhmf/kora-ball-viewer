@@ -7,7 +7,7 @@ import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions
   template:`
     <section class="normalizer">
       <h3>SCAN → 1024×1024 TEMPLATE <small>BETA</small></h3>
-      <p>Correct the whole scanned sheet in one continuous image. No panel cuts, masking or recoloring.</p>
+      <p>Align the whole football net continuously to the exact 1024×1024 reference. Surrounding page details are removed using one connected net mask, never individual panel cuts.</p>
       <label>Colored PDF or photo
         <input type="file" accept=".pdf,application/pdf,image/*" [disabled]="busy()" (change)="load($event)">
       </label>
@@ -30,7 +30,7 @@ import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions
       }
       @if (result(); as output) {
         <div class="preview">
-          <strong>Full-page output: 1024 × 1024 PNG</strong>
+          <strong>Complete football net: 1024 × 1024 PNG</strong>
           <label class="guide-label"><input type="checkbox" [checked]="showGuides()"
             (change)="showGuides.set($any($event.target).checked)">
             Show expected panel outlines (preview only)</label>
@@ -41,16 +41,18 @@ import { ScanNormalizerService, NormalizedPage, QuarterTurn, RegistrationOptions
                 alt="Expected panel outline overlay" />
             }
           </div>
-          <p class="quality">Outline score: {{output.nearEdges}} / {{output.samples}} near edges.
+          <p class="quality">Alignment: {{output.nearEdges}} / {{output.samples}} edge samples. Only artwork inside the connected net silhouette is exported.
             Inspect the green guide lines carefully; misaligned edges need adjustment.</p>
         </div>
         <label class="guide-label"><input type="checkbox" [checked]="approved()"
           (change)="approved.set($any($event.target).checked)">
-          I checked the printed panel alignment in the preview.</label>
-        <button type="button" [disabled]="!approved()" (click)="download()">DOWNLOAD FULL TEXTURE PNG</button>
+          I checked all printed panel outlines against the green guide.</label>
+        <button type="button" [disabled]="!approved()" (click)="download()">DOWNLOAD 1024×1024 NET PNG</button>
+      }
+      @if (source()) {
         <details>
           <summary>Fine alignment controls (no point selection)</summary>
-          <p>Adjust only if the printed outlines don't match the target layout.</p>
+          <p>Adjust the complete sheet if the printed outlines don't match the guide. No panel is cut or moved independently.</p>
           <label>Move horizontally {{shiftX()}} px
             <input type="range" min="-80" max="80" step="1" [value]="shiftX()" (input)="change('shiftX',$event)">
           </label>
@@ -138,13 +140,13 @@ export class ScanNormalizerComponent {
     return {rotation:this.rotation(),shiftX:this.shiftX(),shiftY:this.shiftY(),
       scaleX:this.scaleX()/100,scaleY:this.scaleY()/100,fineRotation:this.fineRotation()};
   }
-  async run(manual=false,alreadyBusy=false):Promise<void>{
+  async run(_manual=false,alreadyBusy=false):Promise<void>{
     const scan=this.source();
     if(!scan||(!alreadyBusy&&this.busy()))return;
     this.busy.set(true);this.clear();
     this.status.set('Registering one continuous page...');
     try{
-      const response=await this.normalizer.normalize(scan,{...this.opts(),manual} as RegistrationOptions,
+      const response=await this.normalizer.normalize(scan,this.opts(),
         status=>this.status.set(status));
       this.result.set(response);
       this.status.set('Created 1024×1024 continuous image. Verify panel positions before download.');

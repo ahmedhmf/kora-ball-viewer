@@ -122,6 +122,39 @@ function align(gray,width,height,dims,manual=false){
   }
   return {best,quality:evaluate(best,true)};
 }
+/**
+ * Build ONE continuous outside silhouette from all printed polygons.
+ * Fills/strokes are unioned in a single canvas; no per-panel sampling/cutting.
+ * The expanded outer contour tolerates small printed outline deviations.
+ * Coordinates are calibrated from the original 725x1024 KORA blank sheet
+ * into the exact master: x = 115 + 1.10*xBlank, y = -54 + 1.09*yBlank.
+ */
+function fullNetMask() {
+  const canvas=new OffscreenCanvas(1024,1024);
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  if(!ctx)throw Error('Canvas masks are unavailable in this browser.');
+  ctx.fillStyle='#000';ctx.fillRect(0,0,1024,1024);
+  ctx.fillStyle='#fff';ctx.strokeStyle='#fff';ctx.lineWidth=15;
+  ctx.lineJoin='round';ctx.lineCap='round';
+  for(const polygon of PANEL_POLYGONS){
+    ctx.beginPath();
+    for(let j=0;j<polygon.length;j++){
+      const [bx,by]=polygon[j];
+      const x=115+1.10*bx,y=-54+1.09*by;
+      if(j===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Close tiny gaps between adjacent printed panels in the single silhouette.
+  // This is binary union of the whole net, NOT independent panel clipping.
+  const pixels=ctx.getImageData(0,0,1024,1024).data;
+  const mask=new Uint8Array(1024*1024);
+  for(let i=0;i<mask.length;i++)mask[i]=pixels[4*i]>127?1:0;
+  return mask;
+}
+
 function bilinear(pixels,w,h,x,y,out,index){
   if(x<0||y<0||x>=w-1||y>=h-1)return;
   const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
@@ -135,11 +168,21 @@ async function process(data){
   progress('Orienting printed sheet and extracting its continuous outline...');
   await tick();
   const img=makeGray(data),dims=img.dims;
-  const manual=data.options.manual===true;
   progress(manual?'Applying full-page adjustments...':'Finding the full-page alignment (no panel cuts)...');
   await tick();
-  const fit=align(img.gray,img.dw,img.dh,dims,manual);
-  progress('Compositing the complete sheet at the exact master template position...');
+  const fit=align(img.gray,img.dw,img.dh,dims,false);
+  const quality=fit.quality;
+  progress('Printed outline registration: '+quality.good+'/'+quality.total+
+    ' close samples across '+quality.bands+'/8 regions; error '+quality.avg.toFixed(1)+'px.');
+  if(quality.valid/quality.total<.90 || quality.good/quality.total<.24 ||
+     quality.bands<5 || quality.avg>7.2){
+    throw Error('Whole-net registration is not reliable (only '+quality.good+'/'+
+      quality.total+' close edge samples across '+quality.bands+
+      '/8 net regions). No image exported; try correcting the orientation first.');
+  }
+  progress('Part A: extracting one continuous complete football-net silhouette...');
+  await tick();
+  progress('Part B: placing the entire net in the canonical 1024×1024 layout...');
   await tick();
   const opts=data.options;
   const cx=fit.best[0]+opts.shiftX*dims.width/1024;
@@ -149,12 +192,17 @@ async function process(data){
   const cs=Math.cos(theta),sn=Math.sin(theta),shear=fit.best[5];
   const result=new Uint8ClampedArray(1024*1024*4);
   result.fill(255);
+  const silhouette=fullNetMask();
+  let maskedPixels=0;
   for(let y=0;y<1024;y++){
     if(y%100===0)await tick();
     // Fixed, calibrated printed-sheet position matching the supplied KORA master.
     // Printed reference image is 725 x 1024; the master image is 1024 x 1024.
     const by=(y+54)/1.09-512;
     for(let x=0;x<1024;x++){
+      const i=y*1024+x;
+      if(!silhouette[i])continue;
+      maskedPixels++;
       const bx=(x-115)/1.10-362.5;
       const u=cx+(sx*bx+shear*by)*cs-sy*by*sn;
       const v=cy+(sx*bx+shear*by)*sn+sy*by*cs;
@@ -163,7 +211,8 @@ async function process(data){
     }
   }
   self.postMessage({type:'complete',pixels:result.buffer,score:fit.quality.avg,
-    nearEdges:fit.quality.good,samples:fit.quality.total},[result.buffer]);
+    nearEdges:fit.quality.good,samples:fit.quality.total,
+    maskPixels:maskedPixels,regionBands:fit.quality.bands},[result.buffer]);
 }
 self.onmessage=event=>{
   if(event.data?.type!=='align')return;

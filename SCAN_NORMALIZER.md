@@ -1,21 +1,30 @@
-# KORA canonical full-page registration — experimental
+# KORA complete-net extraction and canonical 1024×1024 placement
 
-The task is to straighten a scan and produce **one continuous 1024×1024 image** whose football net has the same size and location as the known KORA reference texture. This is **not** PDF orientation metadata and **not** panel-wise warping.
+Two parts run in the browser without backend, OpenCV, AI, or panel-wise manipulation.
 
-## Processing
-- Upload one PDF, JPG, PNG or WEBP. PDF.js renders only the first page.
-- Determine the printed sheet orientation from the bottom-left printed QR-code landmark. If uncertain, manually choose 0/90/180/270 rotation.
-- Work with all 32 panel boundary line samples *together* to optimize one constrained whole-page affine registration (translation, independent X/Y scale, small skew and rotation).
-- Map the entire scanned page continuously into a **1024×1024** canvas using the calibrated KORA blank-sheet → master mapping. **No panel masks, no clipping around individual polygons, no recoloring, no removal of handwriting.**
-- Optional fine controls for X/Y position, width, height and small rotation. This is a fallback for scans with perspective, not a request to choose polygon points.
-- Download PNG. No OpenCV, JSFeat, AI model or backend.
+## Part A — whole-net extraction
+- Read PDF/image and infer printed-sheet orientation from its QR landmark (manual 0/90/180/270 correction available).
+- Estimate one global 2D page registration from all printed panel boundaries simultaneously.
+- Preserve every original scan pixel within the complete net as one continuous warped image. A **single union silhouette** of the original blank print net is rasterized with 15px edge bleed into final coordinates. This removes external QR, instructions and contact details while retaining seams between neighboring panels.
+- No separate panel transformations or interior panel masks.
 
-## Limitations
-- The default target coordinates are calibrated to the exact 1024×1024 KORA master image. Different master layouts need another calibration.
-- Full-page affine fitting does not perfectly eliminate strong perspective distortion, page curvature, or non-linear scanner effects. The user should inspect the output against the known-good master.
-- QR-density fallback is only a heuristic when native BarcodeDetector is missing. Explicit rotation control prevents silent mistakes.
-- **Do not merge** the draft PR until the Angular worker output has been validated in-browser with the original uploaded scanned PDFs.
-- The original scan's handwriting orientation is preserved relative to its printed panels.
+## Part B — canonical placement
+- Sample the original RGB scan once into an exact 1024×1024 white canvas.
+- Fixed calibration from the provided KORA blank sheet (725×1024) into the known-good master is xTarget=115+1.10*xBlank; yTarget=-54+1.09*yBlank.
+- Preview optional green target outlines; green lines never appear in PNG.
+- Check visual alignment before download; controls for whole-sheet X/Y, scale and fine rotation are still available after automatic failure.
 
-## Alignment preview
-The interface overlays a static green guide outlining the 32 panel boundaries in the **known-good canonical master**. The guide is not included in the exported image. Users must confirm visual alignment before downloading. Sliders control full-page X/Y translation, width, height and fine rotation without manipulating panels individually.
+## Reliability
+- Reject uncertain whole-net registrations if too few printed outline samples agree or too few of 8 scan regions align.
+- The single global transform is affine, including independent X/Y scale, translation, rotation and skew. It **cannot perfectly correct strong camera perspective or curled paper**; the user should inspect the green guides.
+- PDF.js currently loads from CDN; it processes locally after loading and does not upload user images.
+- **Unverified in live Chrome**. Feature remains a draft PR; do not merge before checking all 32 panels on the supplied sample scan.
+
+## Test
+```bash
+git switch feature/browser-scan-normalizer
+git pull origin feature/browser-scan-normalizer
+npm install
+npm start
+```
+Upload the sample PDF. Confirm QR/printed logo orientation. The result must show only the connected net on the 1024×1024 canvas and no QR/footer, without cuts between individual panels. Compare outlines with the green guide before approving export.

@@ -16,6 +16,8 @@ export interface NormalizedPage {
   score: number;
   nearEdges: number;
   samples: number;
+  maskPixels: number;
+  regionBands: number;
 }
 
 /** Whole-sheet registration: no masks, panel crops or individual polygon transforms. */
@@ -127,7 +129,7 @@ export class ScanNormalizerService {
   ): Promise<NormalizedPage> {
     const rgba=original.getContext('2d',{willReadFrequently:true})!.getImageData(
       0,0,original.width,original.height);
-    const worker=new Worker('/workers/kora-page-registration.js?v=1');
+    const worker=new Worker('/workers/kora-page-registration.js?v=2');
     return new Promise((resolve,reject)=>{
       let finished=false;
       let stage='Starting registration';
@@ -156,7 +158,8 @@ export class ScanNormalizerService {
               if(finished)return;
               finished=true;cleanup();
               resolve({blob,previewUrl:URL.createObjectURL(blob),imageData:data,
-                score:msg.score,nearEdges:msg.nearEdges,samples:msg.samples});
+                score:msg.score,nearEdges:msg.nearEdges,samples:msg.samples,
+                maskPixels:msg.maskPixels,regionBands:msg.regionBands});
             },'image/png');
           }catch(e){fail(e instanceof Error?e:new Error(String(e)));}
         }
