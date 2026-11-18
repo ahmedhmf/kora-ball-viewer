@@ -2,6 +2,7 @@ import { Component, ElementRef, ViewChild, inject, signal, computed } from '@ang
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
+import { KoraPanelCutoutService } from '../../services/kora-panel-cutout.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
@@ -32,6 +33,11 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           @if (hasImage()) {
             <p class="file">{{fileName()}}</p>
             <p class="helper">Paper detected and straightened automatically. All artwork, labels and margins on the sheet are preserved.</p>
+            <button type="button" class="cutout" [disabled]="busy() || !hasPaper()"
+              (click)="toggleOutsidePanels()">
+              {{outsideRemoved() ? 'SHOW FULL PAPER' : 'REMOVE OUTSIDE PANELS'}}
+            </button>
+            <p class="helper">Optional preview: removes markings around the 32 panels without changing the original straightened page. You can switch back at any time.</p>
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
               {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
@@ -42,7 +48,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>Automatically straightened paper</h3>
+          <h3>{{outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
           <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
           <div class="ruler-layout">
             <div class="ruler-origin">0,0</div>
@@ -84,6 +90,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
     button:disabled{opacity:.5;cursor:not-allowed}
 
+    .cutout{display:block;width:100%;background:#13584c;border-color:#1c9d80;margin:6px 0 10px;font-weight:700}
     .apply{width:100%;background:#b91c1c;border-color:#b91c1c;margin-bottom:10px;font-weight:700}
     .controls>button:not(.apply){width:100%}
     .status{color:#e5e7eb;font-weight:600;overflow-wrap:anywhere}
@@ -112,10 +119,13 @@ export class TechpackPreparerComponent {
   @ViewChild('previewCanvas',{static:true}) private previewRef!:ElementRef<HTMLCanvasElement>;
   private readonly pdf=inject(PdfConverterService);
   private readonly paper=inject(PaperStraightenerService);
+  private readonly panelCutout=inject(KoraPanelCutoutService);
   private readonly model=inject(ModelLoaderService);
   private readonly router=inject(Router);
   private original:HTMLCanvasElement|null=null;
   private straightened:HTMLCanvasElement|null=null;
+  private panelOnly:HTMLCanvasElement|null=null;
+  readonly outsideRemoved=signal(false);
   readonly hasImage=signal(false);
   readonly hasPaper=signal(false);
   readonly busy=signal(false);
@@ -134,7 +144,8 @@ export class TechpackPreparerComponent {
     this.busy.set(true);
     this.hasImage.set(false);
     this.hasPaper.set(false);
-    this.original=null;this.straightened=null;
+    this.original=null;this.straightened=null;this.panelOnly=null;
+    this.outsideRemoved.set(false);
     this.pageWidth.set(1);this.pageHeight.set(1);
     this.status.set('Reading scanned page...');
     try{
@@ -190,16 +201,44 @@ export class TechpackPreparerComponent {
     this.status.set('Paper straightened. Checking QR marker for page orientation...');
     const orientation=await this.paper.orientPrintedSheet(corrected);
     this.straightened=orientation.canvas;
-    const source=this.straightened;
-    const preview=this.previewRef.nativeElement;
-    preview.width=source.width;preview.height=source.height;
-    this.pageWidth.set(source.width);
-    this.pageHeight.set(source.height);
-    preview.getContext('2d')!.drawImage(source,0,0);
+    this.panelOnly=null;
+    this.outsideRemoved.set(false);
+    this.showCanvas(this.straightened);
     this.hasPaper.set(true);
     this.status.set(orientation.reliable
       ? 'Paper straightened and rotated '+orientation.angle+'° automatically. The printed QR is at bottom-left.'
       : 'Paper straightened; printed orientation was uncertain, so no rotation was guessed.');
+  }
+
+  private showCanvas(source: HTMLCanvasElement): void {
+    const preview=this.previewRef.nativeElement;
+    preview.width=source.width;
+    preview.height=source.height;
+    this.pageWidth.set(source.width);
+    this.pageHeight.set(source.height);
+    preview.getContext('2d')!.drawImage(source,0,0);
+  }
+
+  /** Button-only, reversible cleanup. Original corrected page is untouched. */
+  async toggleOutsidePanels(): Promise<void> {
+    if (!this.straightened || this.busy()) return;
+    if (this.outsideRemoved()) {
+      this.outsideRemoved.set(false);
+      this.showCanvas(this.straightened);
+      this.status.set('Showing the full straightened paper again. No data was lost.');
+      return;
+    }
+    this.busy.set(true);
+    this.status.set('Finding KORA panels and clearing marks outside them...');
+    try {
+      this.panelOnly ??= await this.panelCutout.removeOutside(this.straightened);
+      this.outsideRemoved.set(true);
+      this.showCanvas(this.panelOnly);
+      this.status.set('Outside-panel marks hidden. Review the panel edges; click Show Full Paper to undo.');
+    } catch (error) {
+      this.status.set('Outside-panel cleanup failed: '+String(error));
+      console.error('[KORA panel cutout]',error);
+    } finally { this.busy.set(false); }
   }
 
   private finalCanvas():HTMLCanvasElement|null{

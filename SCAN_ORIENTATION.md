@@ -1,14 +1,20 @@
-# Automatic KORA paper straightening and printed orientation
+# Optional “Remove Outside Panels” preview
 
-Upload one WhatsApp PDF/photo at `/prepare-design`. Processing is frontend-only and uses the existing pure-JS perspective worker.
+The successful automatic paper straightening and QR-based orientation are untouched.
 
-1. Detect the paper/table boundary and straighten the whole paper.
-2. **Automatically orient the PRINTED sheet** so its QR marker sits at bottom-left. Prefer native browser QR decoding; use strong corner fine-detail density as fallback (with explicit confidence threshold). Rotate the entire corrected canvas by 0°, 90°, 180°, or 270°; never rotate panels individually or remove content printed on the sheet.
-3. Display the final canvas with **X/Y pixel rulers** outside the preview. Rulers are excluded from both the download and ball texture.
-4. Download corrected PNG or apply the entire upright page to the 3D ball.
+On `/prepare-design`, upload the scanned PDF/photo. The full straightened sheet appears by default, including its printed QR, handwritten footer and all artwork.
 
-The reported latest image has the printed QR top-right, so it requires **180° clockwise** after perspective straightening. If neither detection method can establish orientation reliably, retain the corrected page rather than guess a rotation.
+Once the preview is ready, click **REMOVE OUTSIDE PANELS** to hide page content outside the KORA football net (all 32 panels). The algorithm uses the known blank KORA print outline (725×1024 reference coordinates), performs a small global translation/scale registration against the straightened page, and applies one combined mask **with an 18px safety margin** around printed panel boundaries. This preserves the children's colored marks near panel borders but may retain a little surrounding ink near extreme edges. It doesn't warp the image or move panels separately.
 
-The scan's handwriting may itself have been written upside-down relative to the paper; only the printed paper determines the canonical orientation.
+Click **SHOW FULL PAPER** to restore the original corrected page immediately, without re-uploading. The current preview is what gets downloaded or applied to the ball. The X/Y rulers remain outside the exported image. If panel-border alignment is unreliable, the cleanup rejects the result and leaves the full paper unchanged.
 
-Run: `git switch feature/browser-scan-normalizer && git pull && npm start`.
+No new backend, OpenCV, AI model, or user-selected corner points. The full paper remains the default because this feature is being tested behind a button. The output is still not guaranteed to align to the original ball UV map.
+
+## Test
+```bash
+git switch feature/browser-scan-normalizer
+git pull origin feature/browser-scan-normalizer
+npm install
+npm start
+```
+Upload the original WhatsApp PDF, click **REMOVE OUTSIDE PANELS**, inspect every panel boundary, try **SHOW FULL PAPER**, then optionally download or apply to ball.
