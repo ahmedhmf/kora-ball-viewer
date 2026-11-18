@@ -21,6 +21,8 @@ export interface BallVisualizerState {
   isLoading: boolean;
   isRecording: boolean;
   recordingProgress: number; // 0 to 100
+  isExportingPack: boolean;
+  packExportProgress: number; // 0 to 100
   statusMessage: string;
   isModelLoaded: boolean;
   isTextureLoaded: boolean;
@@ -46,6 +48,8 @@ const initialState: BallVisualizerState = {
   isLoading: false,
   isRecording: false,
   recordingProgress: 0,
+  isExportingPack: false,
+  packExportProgress: 0,
   statusMessage: 'Ready. Drop an OBJ 3D Ball model and Face Filter texture.',
   isModelLoaded: false,
   isTextureLoaded: false,
@@ -139,6 +143,21 @@ export const BallVisualizerStore = signalStore(
       patchState(store, {
         recordingProgress,
         statusMessage: `Encoding 360° Video... ${recordingProgress}%`,
+      });
+    },
+    setIsExportingPack(isExportingPack: boolean, packExportProgress = 0) {
+      patchState(store, {
+        isExportingPack,
+        packExportProgress,
+        statusMessage: isExportingPack
+          ? `Extracting 8-View Ball Image Pack... ${packExportProgress}%`
+          : '8-View Ball Image Pack (.zip) exported successfully.',
+      });
+    },
+    setPackExportProgress(packExportProgress: number, label?: string) {
+      patchState(store, {
+        packExportProgress,
+        statusMessage: `Capturing ${label || 'view'}... ${packExportProgress}%`,
       });
     },
     setLoading(isLoading: boolean, statusMessage?: string) {

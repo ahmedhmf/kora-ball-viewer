@@ -47,7 +47,3 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
-
-# Built browser asset copied from the pinned npm package
-/public/vendor/opencv.js
-/public/vendor/jsfeat.min.js

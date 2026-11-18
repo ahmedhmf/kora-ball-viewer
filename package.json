@@ -9,8 +9,7 @@
     "start": "node scripts/set-env.js && ng serve",
     "build": "node scripts/set-env.js && ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
-    "test:net-geometry": "node scripts/test-kora-net-geometry.mjs"
+    "test": "ng test"
   },
   "private": true,
   "packageManager": "npm@11.13.0",
@@ -26,6 +25,7 @@
     "@ngrx/signals": "^22.0.1",
     "mediabunny": "^1.58.1",
     "mp4-muxer": "^5.2.2",
+    "pdfjs-dist": "^4.10.38",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },

@@ -1,0 +1,129 @@
+<!-- KORA Catalogue Inspired Header -->
+<header class="app-header">
+  <div class="brand">
+    <img src="logo.png" alt="KORA" class="kora-logo-img" />
+    <div class="brand-divider"></div>
+    <div class="brand-title">
+      <span class="tagline">MADE IN EGYPT • ENGINEERED IN GERMANY</span>
+      <span class="sub-tagline">3D BALL VISUALIZER & FACE FILTER ENGINE</span>
+    </div>
+  </div>
+
+  <div class="header-status">
+    <button
+      class="lock-app-btn"
+      (click)="authService.lock()"
+      title="Lock Application"
+      *ngIf="authService.isAuthenticated()"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      <span>Lock</span>
+    </button>
+
+    <div class="fifa-badge">
+      <span class="badge-flag">🇪🇬 / 🇩🇪</span>
+      <span class="badge-text">FIFA-LEVEL SPEC</span>
+    </div>
+
+    <div class="status-pill" [class.active]="store.hasModel()">
+      <span class="indicator"></span>
+      <span class="label">{{ store.hasModel() ? store.modelFileName() : 'No 3D Model' }}</span>
+    </div>
+
+    <div class="status-pill" [class.active]="store.hasTexture()">
+      <span class="indicator texture"></span>
+      <span class="label">{{ store.hasTexture() ? store.textureFileName() : 'No Filter Applied' }}</span>
+    </div>
+  </div>
+</header>
+
+<!-- Main Viewport and UI Sidebar -->
+<main class="viewport-wrapper">
+  <!-- 3D Render Canvas -->
+  <div
+    class="canvas-container"
+    [class.drag-over]="isCanvasDragOver"
+    (dragenter)="onCanvasDragEnter($event)"
+    (dragover)="onCanvasDragOver($event)"
+    (dragleave)="onCanvasDragLeave($event)"
+    (drop)="onCanvasDrop($event)"
+  >
+    <canvas #renderCanvas id="renderCanvas"></canvas>
+
+    <!-- Drag & Drop Canvas Overlay Hint -->
+    <div class="canvas-drop-overlay" *ngIf="isCanvasDragOver">
+      <div class="overlay-content">
+        <span class="overlay-icon">📥</span>
+        <h2>Drop 3D Ball Model (.obj) or Face Filter (.jpg)</h2>
+        <p>File will be loaded instantly in Babylon 3D scene</p>
+      </div>
+    </div>
+
+    <!-- Initial Canvas Empty Guide (if no model loaded yet) -->
+    <div class="canvas-empty-hint" *ngIf="!store.hasModel() && !isCanvasDragOver">
+      <div class="hint-card">
+        <div class="hint-logo-container">
+          <img src="logo.png" alt="KORA" class="hint-logo" />
+        </div>
+        <h3>DROP 3D BALL MODEL (.OBJ)</h3>
+        <p>Drop your panel structured ball OBJ file anywhere on the screen or use the sidebar dropzones to visualize.</p>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" *ngIf="store.isLoading()">
+      <div class="spinner"></div>
+      <p>{{ store.statusMessage() }}</p>
+    </div>
+
+    <!-- Floating Status Toast -->
+    <div class="status-toast" *ngIf="store.statusMessage() && !store.isLoading()">
+      <span class="toast-icon">ℹ️</span>
+      <span class="toast-message">{{ store.statusMessage() }}</span>
+    </div>
+  </div>
+
+  <!-- UI Sidebar Controls & File Uploaders -->
+  <aside class="ui-sidebar">
+    <div class="sidebar-section">
+      <h2 class="section-title">STRAIGHTEN WHATSAPP PDF / PHOTO</h2>
+      <a routerLink="/prepare-design" style="display:block;padding:12px;border:1px solid #b91c1c;border-radius:6px;color:white;text-decoration:none;background:#7f1d1d;text-align:center;font-weight:700;">
+        Upload page, straighten &amp; apply to ball
+      </a>
+    </div>
+    <div class="sidebar-section">
+      <h2 class="section-title">1. LOAD 3D BALL STRUCTURE</h2>
+      <app-drop-zone
+        title="3D Ball Model"
+        subtitle="Drop .OBJ or .GLB file"
+        icon="⚽"
+        acceptTypes=".obj,.glb,.gltf"
+        [fileName]="store.modelFileName()"
+        [fileSize]="store.formattedModelSize()"
+        [hasFile]="store.hasModel()"
+        (fileDropped)="onModelDropped($event)"
+      ></app-drop-zone>
+    </div>
+
+    <div class="sidebar-section">
+      <h2 class="section-title">2. APPLY FACE FILTER GRAPHIC</h2>
+      <app-drop-zone
+        title="Face Filter Graphic"
+        subtitle="Drop .JPG or .PNG image"
+        icon="🖼️"
+        acceptTypes=".jpg,.jpeg,.png,.webp"
+        [fileName]="store.textureFileName()"
+        [fileSize]="store.formattedTextureSize()"
+        [hasFile]="store.hasTexture()"
+        (fileDropped)="onTextureDropped($event)"
+      ></app-drop-zone>
+    </div>
+
+    <div class="sidebar-section">
+      <app-controls-panel></app-controls-panel>
+    </div>
+  </aside>
+</main>

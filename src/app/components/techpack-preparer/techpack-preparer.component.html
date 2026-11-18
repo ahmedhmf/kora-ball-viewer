@@ -1,0 +1,316 @@
+<!-- Header -->
+<header class="app-header">
+  <div class="brand">
+    <img src="logo.png" alt="KORA" class="kora-logo-img" />
+    <div class="brand-divider"></div>
+    <div class="brand-title">
+      <span class="tagline">KORA WHATSAPP PDF TO JPG EXTRACTOR</span>
+      <span class="sub-tagline">EXTRACT SCANNED PDF DOCUMENTS TO CRISP HIGH-RES JPG FOR 3D VISUALIZER</span>
+    </div>
+  </div>
+
+  <div class="header-status">
+    <button
+      class="nav-btn secondary"
+      routerLink="/"
+      title="Return to 3D Ball Visualizer"
+    >
+      <span>⚽ Back to 3D Viewer</span>
+    </button>
+
+    <button
+      class="lock-app-btn"
+      (click)="authService.lock()"
+      title="Lock Application"
+      *ngIf="authService.isAuthenticated()"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      <span>Lock</span>
+    </button>
+  </div>
+</header>
+
+<main class="preparer-container">
+  <!-- Left Panel: PDF Upload Dropzone & Controls -->
+  <section class="panel upload-panel">
+    <div class="panel-header">
+      <div class="title-wrap">
+        <h2>1. UPLOAD WHATSAPP SCANNED PDF</h2>
+        <span class="sub">Drop or upload any scanned PDF document from WhatsApp or camera</span>
+      </div>
+
+      <div class="panel-actions">
+        <button class="small-btn" (click)="loadSamplePdf()" title="Reload sample PDF">
+          📄 Sample PDF
+        </button>
+
+        <button class="small-btn primary-upload" (click)="fileInput.click()">
+          📥 Upload PDF File
+        </button>
+        <input
+          #fileInput
+          type="file"
+          accept=".pdf,application/pdf"
+          style="display: none"
+          (change)="onFileSelected($event)"
+        />
+      </div>
+    </div>
+
+    <!-- Dropzone Area -->
+    <div
+      class="dropzone-area"
+      [class.drag-over]="isDragOver"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onFileDropped($event)"
+      (click)="fileInput.click()"
+    >
+      <div class="dropzone-content">
+        <div class="pdf-icon">📄</div>
+        <h3>DROP WHATSAPP PDF HERE</h3>
+        <p>Click or drag & drop scanned PDF file (.pdf)</p>
+        <span class="file-badge" *ngIf="fileName">{{ fileName }} ({{ numPages }} {{ numPages === 1 ? 'page' : 'pages' }})</span>
+      </div>
+    </div>
+
+    <!-- Pagination & Page Controls if Multi-page PDF -->
+    <div class="pagination-box" *ngIf="numPages > 0">
+      <div class="pagination-bar">
+        <button
+          class="page-nav-btn"
+          [disabled]="currentPage <= 1"
+          (click)="goToPage(currentPage - 1)"
+        >
+          ◀ Prev Page
+        </button>
+
+        <span class="page-indicator">Page {{ currentPage }} of {{ numPages }}</span>
+
+        <button
+          class="page-nav-btn"
+          [disabled]="currentPage >= numPages"
+          (click)="goToPage(currentPage + 1)"
+        >
+          Next Page ▶
+        </button>
+      </div>
+
+      <!-- DPI Quality Selector -->
+      <div class="dpi-selector">
+        <span class="dpi-label">EXTRACT QUALITY:</span>
+        <button
+          type="button"
+          class="dpi-btn"
+          [class.active]="renderScale === 1.5"
+          (click)="setScale(1.5)"
+        >
+          150 DPI
+        </button>
+        <button
+          type="button"
+          class="dpi-btn"
+          [class.active]="renderScale === 3.0"
+          (click)="setScale(3.0)"
+        >
+          300 DPI HD ★
+        </button>
+        <button
+          type="button"
+          class="dpi-btn"
+          [class.active]="renderScale === 5.0"
+          (click)="setScale(5.0)"
+        >
+          600 DPI 4K
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Right Panel: Extracted JPG Page View & Actions -->
+  <section class="panel preview-panel">
+    <div class="panel-header">
+      <div class="title-wrap">
+        <h2>2. EXTRACTED HIGH-RES JPG</h2>
+        <span class="sub">Extracted PDF page ready for JPG export or 3D ball visualizer</span>
+      </div>
+
+      <div class="header-badges">
+        <span class="bg-badge">CRISP JPG QUALITY</span>
+        <span class="res-badge" *ngIf="currentRenderResult">
+          {{ currentRenderResult.width }} × {{ currentRenderResult.height }} PX
+        </span>
+      </div>
+    </div>
+
+    <div class="result-workspace">
+      <!-- PDF Extracted Canvas -->
+      <div class="result-canvas-container">
+        <canvas #pdfCanvas class="result-canvas"></canvas>
+
+        <div class="processing-spinner" *ngIf="isLoading">
+          <div class="spinner"></div>
+          <span>Rendering PDF to JPG...</span>
+        </div>
+      </div>
+
+      <!-- Controls & Actions Sidebar -->
+      <div class="controls-sidebar">
+        <!-- Text Cleaning Control Box -->
+        <div class="control-box text-clean-box">
+          <div class="box-header">
+            <h3>🧹 REMOVE SURROUNDING TEXT</h3>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                [(ngModel)]="removeOuterText"
+                (ngModelChange)="renderCurrentPage()"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <p class="clean-desc">
+            Safely masks outer header tagline, top logo, bottom QR code, and form text while preserving 100% of all panel geometry.
+          </p>
+
+          <div *ngIf="removeOuterText" class="clean-controls">
+            <div class="preset-pills">
+              <button
+                class="preset-pill"
+                [class.active]="headerCutoff === 9.5 && footerCutoff === 86.0"
+                (click)="setCleaningPreset('safe')"
+              >
+                Safe
+              </button>
+              <button
+                class="preset-pill"
+                [class.active]="headerCutoff === 11.0 && footerCutoff === 84.0"
+                (click)="setCleaningPreset('balanced')"
+              >
+                Balanced
+              </button>
+              <button
+                class="preset-pill"
+                [class.active]="headerCutoff === 12.5 && footerCutoff === 83.0"
+                (click)="setCleaningPreset('tight')"
+              >
+                Tight
+              </button>
+            </div>
+
+            <div class="control-row">
+              <label>Top Header Mask</label>
+              <span class="val">{{ headerCutoff }}%</span>
+              <input
+                type="range"
+                min="0"
+                max="13"
+                step="0.5"
+                [(ngModel)]="headerCutoff"
+                (ngModelChange)="renderCurrentPage()"
+                class="range-slider"
+              />
+            </div>
+
+            <div class="control-row">
+              <label>Bottom Footer Mask</label>
+              <span class="val">{{ footerCutoff }}%</span>
+              <input
+                type="range"
+                min="82.5"
+                max="100"
+                step="0.5"
+                [(ngModel)]="footerCutoff"
+                (ngModelChange)="renderCurrentPage()"
+                class="range-slider"
+              />
+            </div>
+
+            <div class="control-row">
+              <label>Side Margins Mask</label>
+              <span class="val">{{ sideMarginCutoff }}%</span>
+              <input
+                type="range"
+                min="0"
+                max="2.5"
+                step="0.5"
+                [(ngModel)]="sideMarginCutoff"
+                (ngModelChange)="renderCurrentPage()"
+                class="range-slider"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Image Adjustments -->
+        <div class="control-box">
+          <div class="box-header">
+            <h3>IMAGE ADJUSTMENTS & ORIENTATION</h3>
+            <button class="text-btn" (click)="onResetFilters()">Reset</button>
+          </div>
+
+          <div class="control-row">
+            <label>Brightness</label>
+            <span class="val">{{ brightness }}</span>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              step="1"
+              [(ngModel)]="brightness"
+              (ngModelChange)="renderCurrentPage()"
+              class="range-slider"
+            />
+          </div>
+
+          <div class="control-row">
+            <label>Contrast</label>
+            <span class="val">{{ contrast }}</span>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              step="1"
+              [(ngModel)]="contrast"
+              (ngModelChange)="renderCurrentPage()"
+              class="range-slider"
+            />
+          </div>
+
+          <div class="orientation-bar">
+            <button class="orient-btn" (click)="rotate(-90)" title="Rotate Left">↩️ 90°</button>
+            <button class="orient-btn" (click)="rotate(90)" title="Rotate Right">↪️ 90°</button>
+            <button class="orient-btn" [class.active]="flipH" (click)="toggleFlipH()">↔️ Flip H</button>
+            <button class="orient-btn" [class.active]="flipV" (click)="toggleFlipV()">↕️ Flip V</button>
+          </div>
+        </div>
+
+        <!-- Status Box -->
+        <div class="status-toast-box" *ngIf="statusMsg">
+          <span class="toast-icon">ℹ️</span>
+          <span class="toast-text">{{ statusMsg }}</span>
+        </div>
+
+        <!-- Export Actions -->
+        <div class="export-actions">
+          <button class="apply-3d-btn" (click)="applyTo3DViewer()">
+            ⚽ APPLY DIRECTLY TO 3D BALL VISUALIZER
+          </button>
+
+          <div class="export-row">
+            <button class="export-btn" (click)="exportAsJPG()">
+              📥 EXPORT AS JPG
+            </button>
+            <button class="export-btn" (click)="exportAsPNG()">
+              📥 EXPORT AS PNG
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
