@@ -1,19 +1,14 @@
-# Automatic KORA paper correction with X/Y rulers
+# Automatic KORA paper straightening and printed orientation
 
-On `/prepare-design` upload one original PDF or photo. The application detects the slanted paper/table boundary and straightens the **entire photographed sheet** using one projective transform, keeping the 32 football panels, text, QR and handwriting unchanged.
+Upload one WhatsApp PDF/photo at `/prepare-design`. Processing is frontend-only and uses the existing pure-JS perspective worker.
 
-The automatic detector fits and refines a continuous colored-paper seam across multiple heights, and only accepts a boundary when it has sufficient support. The expected sample right-edge positions are roughly 96.5% across at the top and 69.2% at the bottom; the detector estimates the edge from pixels, not from hardcoded crop values.
+1. Detect the paper/table boundary and straighten the whole paper.
+2. **Automatically orient the PRINTED sheet** so its QR marker sits at bottom-left. Prefer native browser QR decoding; use strong corner fine-detail density as fallback (with explicit confidence threshold). Rotate the entire corrected canvas by 0°, 90°, 180°, or 270°; never rotate panels individually or remove content printed on the sheet.
+3. Display the final canvas with **X/Y pixel rulers** outside the preview. Rulers are excluded from both the download and ball texture.
+4. Download corrected PNG or apply the entire upright page to the 3D ball.
 
-An **X-axis ruler above the image** and **Y-axis ruler to its left** show corrected-image pixel coordinates. Both rulers are outside the preview canvas so the exported PNG and Babylon texture contain **no ruler marks**.
+The reported latest image has the printed QR top-right, so it requires **180° clockwise** after perspective straightening. If neither detection method can establish orientation reliably, retain the corrected page rather than guess a rotation.
 
-There are no manual crop-point selectors or adjustment sliders. If the paper edge is not reliably detected (for example an already-straightened image with no visible tabletop), the app requests a clearer original instead of generating an unverified crop.
+The scan's handwriting may itself have been written upside-down relative to the paper; only the printed paper determines the canonical orientation.
 
-## Test
-```bash
-git switch feature/browser-scan-normalizer
-git pull
-npm install
-npm run test:paper
-npm start
-```
-Open `/prepare-design`, upload the original WhatsApp scan PDF, inspect paper-only preview and axes, then use the existing download or apply-to-ball action. Neither the detector nor the viewer aligns paper artwork to individual 3D UV panels.
+Run: `git switch feature/browser-scan-normalizer && git pull && npm start`.

@@ -186,7 +186,10 @@ export class TechpackPreparerComponent {
       throw new Error(guess.note);
     }
     const quad=this.paper.corners(this.original,guess.topRight,guess.bottomRight);
-    this.straightened=await this.paper.straighten(this.original,quad);
+    const corrected=await this.paper.straighten(this.original,quad);
+    this.status.set('Paper straightened. Checking QR marker for page orientation...');
+    const orientation=await this.paper.orientPrintedSheet(corrected);
+    this.straightened=orientation.canvas;
     const source=this.straightened;
     const preview=this.previewRef.nativeElement;
     preview.width=source.width;preview.height=source.height;
@@ -194,7 +197,9 @@ export class TechpackPreparerComponent {
     this.pageHeight.set(source.height);
     preview.getContext('2d')!.drawImage(source,0,0);
     this.hasPaper.set(true);
-    this.status.set('Paper straightened automatically. The table was excluded; all content on the paper is preserved.');
+    this.status.set(orientation.reliable
+      ? 'Paper straightened and rotated '+orientation.angle+'° automatically. The printed QR is at bottom-left.'
+      : 'Paper straightened; printed orientation was uncertain, so no rotation was guessed.');
   }
 
   private finalCanvas():HTMLCanvasElement|null{

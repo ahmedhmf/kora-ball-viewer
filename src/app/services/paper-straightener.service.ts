@@ -125,6 +125,89 @@ export class PaperStraightenerService {
     };
   }
 
+
+  /**
+   * Orient the PRINTED KORA paper using its unique QR marker. Upright KORA
+   * prints have the QR at bottom-left, regardless of children's handwriting.
+   * Uses native BarcodeDetector when available; otherwise checks QR-like
+   * cross-directional edge density in all four page corners.
+   */
+  async orientPrintedSheet(source: HTMLCanvasElement): Promise<{
+    canvas: HTMLCanvasElement;
+    angle: 0 | 90 | 180 | 270;
+    reliable: boolean;
+  }> {
+    let angle: 0 | 90 | 180 | 270 = 0;
+    let reliable = false;
+    const rotateForCorner = (corner: number): 0 | 90 | 180 | 270 =>
+      ([270, 180, 0, 90] as const)[corner];
+    const Detector = (window as any).BarcodeDetector;
+    if (typeof Detector === 'function') {
+      try {
+        const found: any[] = await new Detector({ formats: ['qr_code'] }).detect(source);
+        if (found.length === 1 && found[0].boundingBox) {
+          const box = found[0].boundingBox;
+          const cx = (box.x + box.width / 2) / source.width;
+          const cy = (box.y + box.height / 2) / source.height;
+          if ((cx < .35 || cx > .65) && (cy < .35 || cy > .65)) {
+            const corner = (cy > .5 ? 2 : 0) + (cx > .5 ? 1 : 0);
+            angle = rotateForCorner(corner);
+            reliable = true;
+          }
+        }
+      } catch { /* Unsupported browser or unreadable QR. Use pixel fallback. */ }
+    }
+
+    if (!reliable) {
+      const w = 256;
+      const h = Math.max(128, Math.round(w * source.height / source.width));
+      const probe = document.createElement('canvas');
+      probe.width = w; probe.height = h;
+      const ctx = probe.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('Cannot inspect printed page orientation');
+      ctx.drawImage(source, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      const gray = new Uint8Array(w * h);
+      for (let i = 0; i < gray.length; i++) {
+        gray[i] = Math.round(.299 * rgba[4*i] + .587 * rgba[4*i+1] + .114 * rgba[4*i+2]);
+      }
+      const xSize = Math.round(w * .28), ySize = Math.round(h * .28);
+      const scores: number[] = [];
+      for (const [right,bottom] of [[false,false],[true,false],[false,true],[true,true]]) {
+        const x0 = right ? w - xSize : 0;
+        const y0 = bottom ? h - ySize : 0;
+        let score = 0;
+        for (let y = y0 + 1; y < y0 + ySize - 1; y++) {
+          for (let x = x0 + 1; x < x0 + xSize - 1; x++) {
+            const i = y*w+x;
+            if (Math.abs(gray[i-1]-gray[i+1]) > 28 &&
+                Math.abs(gray[i-w]-gray[i+w]) > 28) score++;
+          }
+        }
+        scores.push(score);
+      }
+      const ranking = scores.map((score,corner)=>({score,corner}))
+        .sort((a,b)=>b.score-a.score);
+      // Don't rotate on a small or ambiguous signal; any red scribbles on a
+      // corner can also create high-frequency features.
+      if (ranking[0].score >= 75 && ranking[0].score >= 1.8 * Math.max(1,ranking[1].score)) {
+        angle = rotateForCorner(ranking[0].corner);
+        reliable = true;
+      }
+    }
+    if (angle === 0) return {canvas:source,angle,reliable};
+    const result = document.createElement('canvas');
+    const sideways = angle === 90 || angle === 270;
+    result.width = sideways ? source.height : source.width;
+    result.height = sideways ? source.width : source.height;
+    const context = result.getContext('2d');
+    if (!context) throw new Error('Cannot rotate corrected paper');
+    context.translate(result.width / 2, result.height / 2);
+    context.rotate(angle * Math.PI / 180);
+    context.drawImage(source,-source.width / 2,-source.height / 2);
+    return {canvas:result,angle,reliable};
+  }
+
   straighten(source:HTMLCanvasElement, quad:PaperQuad):Promise<HTMLCanvasElement> {
     const ctx=source.getContext('2d',{willReadFrequently:true});
     if(!ctx)throw new Error('Cannot access scan image');
