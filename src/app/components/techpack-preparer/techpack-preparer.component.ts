@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, signal, computed } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
@@ -43,7 +43,27 @@ import { ModelLoaderService } from '../../services/model-loader.service';
         </section>
         <section class="preview">
           <h3>Automatically straightened paper</h3>
-          <canvas #previewCanvas aria-label="Entire paper with perspective corrected, no table"></canvas>
+          <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
+          <div class="ruler-layout">
+            <div class="ruler-origin">0,0</div>
+            <div class="ruler-x">
+              @for (tick of xTicks(); track tick) {
+                <div class="x-tick" [style.left.%]="tick * 100 / pageWidth()">
+                  <span>{{tick}}</span>
+                </div>
+              }
+              <span class="axis-name">X (px)</span>
+            </div>
+            <div class="ruler-y">
+              @for (tick of yTicks(); track tick) {
+                <div class="y-tick" [style.top.%]="tick * 100 / pageHeight()">
+                  <span>{{tick}}</span>
+                </div>
+              }
+              <span class="axis-name-y">Y (px)</span>
+            </div>
+            <canvas #previewCanvas aria-label="Entire paper with perspective corrected, X/Y rulers outside the image"></canvas>
+          </div>
         </section>
       </div>
     </main>
@@ -68,9 +88,23 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     .controls>button:not(.apply){width:100%}
     .status{color:#e5e7eb;font-weight:600;overflow-wrap:anywhere}
     .file{overflow-wrap:anywhere}.helper{color:#fcd34d}
-    .preview{display:flex;flex-direction:column;min-height:360px;align-items:center}
+    .preview{display:flex;flex-direction:column;min-height:360px;min-width:0;overflow:auto;max-height:87vh}
     .preview h3{align-self:flex-start}
-    .preview canvas{display:block;max-width:100%;max-height:76vh;width:auto;height:auto;background:white}
+    .coordinate-help{margin:0 0 12px}
+    .ruler-layout{display:grid;grid-template-columns:48px minmax(0,1fr);
+      grid-template-rows:30px auto;align-items:stretch;width:100%;max-width:820px;margin:0 auto}
+    .ruler-origin{background:#28313d;color:#e5e7eb;text-align:center;
+      line-height:30px;font-size:11px;border-right:1px solid #636d7a;border-bottom:1px solid #636d7a}
+    .ruler-x,.ruler-y{background:#202a35;position:relative;color:#d2d7df;overflow:hidden}
+    .ruler-x{border-bottom:1px solid #718096}
+    .ruler-y{border-right:1px solid #718096}
+    .x-tick{position:absolute;bottom:0;height:11px;border-left:1px solid #a5b4c7}
+    .x-tick span{position:absolute;bottom:12px;left:3px;font-size:10px;white-space:nowrap}
+    .y-tick{position:absolute;right:0;width:11px;border-top:1px solid #a5b4c7}
+    .y-tick span{position:absolute;right:14px;top:-7px;font-size:10px;white-space:nowrap}
+    .axis-name{position:absolute;right:5px;top:3px;font-size:10px;color:#91a1b4}
+    .axis-name-y{position:absolute;left:4px;bottom:5px;font-size:10px;color:#91a1b4}
+    .preview canvas{display:block;width:100%;height:auto;max-width:none;max-height:none;background:white}
     @media(max-width:800px){.workspace{grid-template-columns:1fr}}
   `]
 })
@@ -87,6 +121,10 @@ export class TechpackPreparerComponent {
   readonly busy=signal(false);
   readonly status=signal('Upload the PDF or photo containing the photographed paper.');
   readonly fileName=signal('');
+  readonly pageWidth=signal(1);
+  readonly pageHeight=signal(1);
+  readonly xTicks=computed(()=>this.makeTicks(this.pageWidth()));
+  readonly yTicks=computed(()=>this.makeTicks(this.pageHeight()));
 
   async loadFile(event:Event):Promise<void>{
     const input=event.target as HTMLInputElement;
@@ -97,6 +135,7 @@ export class TechpackPreparerComponent {
     this.hasImage.set(false);
     this.hasPaper.set(false);
     this.original=null;this.straightened=null;
+    this.pageWidth.set(1);this.pageHeight.set(1);
     this.status.set('Reading scanned page...');
     try{
       const isPdf=file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf');
@@ -129,6 +168,15 @@ export class TechpackPreparerComponent {
 
   /** One upload → paper detection → one continuous perspective warp → preview.
    * No alignment controls or separate confirmation step required. */
+  private makeTicks(length:number):number[]{
+    if(length<=1)return [];
+    // Keep the axis readable on small screens: labels every ~15% of the page.
+    const interval=Math.max(50,Math.ceil(length/6/50)*50);
+    const ticks:number[]=[];
+    for(let n=0;n<length;n+=interval)ticks.push(n);
+    return ticks;
+  }
+
   private async straightenAutomatically():Promise<void>{
     if(!this.original)return;
     this.status.set('Finding the paper border and straightening its perspective...');
@@ -142,6 +190,8 @@ export class TechpackPreparerComponent {
     const source=this.straightened;
     const preview=this.previewRef.nativeElement;
     preview.width=source.width;preview.height=source.height;
+    this.pageWidth.set(source.width);
+    this.pageHeight.set(source.height);
     preview.getContext('2d')!.drawImage(source,0,0);
     this.hasPaper.set(true);
     this.status.set('Paper straightened automatically. The table was excluded; all content on the paper is preserved.');

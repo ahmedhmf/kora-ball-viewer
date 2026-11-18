@@ -1,14 +1,19 @@
-# KORA automatic paper straightening
+# Automatic KORA paper correction with X/Y rulers
 
-**No manual alignment.** On `/prepare-design`, upload one PDF or photo. The app:
-1. Reads the image or first PDF page.
-2. Locates the faint diagonal between the photographed sheet and the table.
-3. Corrects the entire sheet with one perspective transform in a browser worker.
-4. Immediately previews the full corrected paper; all drawings, printed text, and QR markings on it remain.
-5. Offers only `Apply straightened paper to ball` and `Download corrected PNG`.
+On `/prepare-design` upload one original PDF or photo. The application detects the slanted paper/table boundary and straightens the **entire photographed sheet** using one projective transform, keeping the 32 football panels, text, QR and handwriting unchanged.
 
-The detection specifically handles the uploaded WhatsApp example, where the top, left and bottom of the paper meet the frame and the right edge slopes inward. If the paper/table boundary is too ambiguous, the app displays a clear error rather than silently exporting the table.
+The automatic detector fits and refines a continuous colored-paper seam across multiple heights, and only accepts a boundary when it has sufficient support. The expected sample right-edge positions are roughly 96.5% across at the top and 69.2% at the bottom; the detector estimates the edge from pixels, not from hardcoded crop values.
 
-No OpenCV startup, additional backend, panel-by-panel warp, masks, or manual edge sliders. An entire corrected A4 paper placed on the ball will still use the existing square-texture fitting; this does not solve UV registration.
+An **X-axis ruler above the image** and **Y-axis ruler to its left** show corrected-image pixel coordinates. Both rulers are outside the preview canvas so the exported PNG and Babylon texture contain **no ruler marks**.
 
-Test: `npm start`, then go to `/prepare-design` and upload `WhatsApp Scan 2026-09-25 at 21.25.58(1).pdf`.
+There are no manual crop-point selectors or adjustment sliders. If the paper edge is not reliably detected (for example an already-straightened image with no visible tabletop), the app requests a clearer original instead of generating an unverified crop.
+
+## Test
+```bash
+git switch feature/browser-scan-normalizer
+git pull
+npm install
+npm run test:paper
+npm start
+```
+Open `/prepare-design`, upload the original WhatsApp scan PDF, inspect paper-only preview and axes, then use the existing download or apply-to-ball action. Neither the detector nor the viewer aligns paper artwork to individual 3D UV panels.

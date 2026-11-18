@@ -43,43 +43,72 @@ export class PaperStraightenerService {
         chroma[y*targetWidth+x] = g - (r+b)*0.5;
       }
     }
-    // Score a continuous diagonal by comparing the tabletop's green tint
-    // outside the page with the nearly neutral paper just inside its edge.
+    // Measure the same paper/table boundary used to correct the reference PDF.
+    // Search for a *continuous slanted line*, not individual dark contours;
+    // handwriting and the football net are much stronger than the faint edge.
     const y0=Math.round(targetHeight*.12), y1=Math.round(targetHeight*.90);
-    const offset=Math.round(targetWidth*.026);
-    let best={score:-Infinity,top:1,bottom:1};
-    for(let top=0.86;top<=1.041;top+=.02){
-      for(let bottom=.56;bottom<=.881;bottom+=.02){
-        if(top-bottom<.10)continue;
-        const differences:number[]=[];
-        for(let y=y0;y<=y1;y+=5){
-          const position=top+(bottom-top)*y/(targetHeight-1);
-          const x=Math.round(position*targetWidth);
-          const inner=Math.max(0,Math.min(targetWidth-1,x-offset));
-          const outer=Math.max(0,Math.min(targetWidth-1,x+offset));
-          differences.push(Math.max(-7,Math.min(7,
-            chroma[y*targetWidth+outer]-chroma[y*targetWidth+inner])));
-        }
-        differences.sort((a,b)=>a-b);
-        const lo=Math.floor(differences.length*.2),hi=Math.ceil(differences.length*.8);
-        let sum=0;
-        for(let j=lo;j<hi;j++)sum+=differences[j];
-        const score=sum/Math.max(1,hi-lo);
-        if(score>best.score)best={score,top,bottom};
+    const offset=Math.max(4,Math.round(targetWidth*.026));
+    const rows:number[]=[];
+    for(let y=y0;y<=y1;y+=4)rows.push(y);
+    function scoreLine(top:number,bottom:number):{score:number;support:number}{
+      const differences:number[]=[];
+      let supported=0;
+      for(const y of rows){
+        const t=y/(targetHeight-1);
+        const x=Math.round((top+(bottom-top)*t)*targetWidth);
+        const inner=Math.max(0,Math.min(targetWidth-1,x-offset));
+        const outer=Math.max(0,Math.min(targetWidth-1,x+offset));
+        const delta=Math.max(-7,Math.min(7,
+          chroma[y*targetWidth+outer]-chroma[y*targetWidth+inner]));
+        differences.push(delta);
+        if(delta>1.0)supported++;
+      }
+      differences.sort((a,b)=>a-b);
+      const lo=Math.floor(differences.length*.2);
+      const hi=Math.ceil(differences.length*.8);
+      let sum=0;
+      for(let j=lo;j<hi;j++)sum+=differences[j];
+      return {score:sum/Math.max(1,hi-lo),support:supported/rows.length};
+    }
+    let best={score:-Infinity,top:1,bottom:1,support:0};
+    for(let top=.84;top<=1.02;top+=.012){
+      for(let bottom=.53;bottom<=.92;bottom+=.012){
+        if(top-bottom<.09)continue;
+        const candidate=scoreLine(top,bottom);
+        if(candidate.score>best.score)
+          best={score:candidate.score,top,bottom,support:candidate.support};
       }
     }
-    if(best.score>=1.35){
+    // Refine both ends to sub-pixel precision on the downscaled scan.
+    for(const step of [.006,.003]){
+      let refined=best;
+      for(const dt of [-2,-1,0,1,2]){
+        for(const db of [-2,-1,0,1,2]){
+          const top=best.top+dt*step,bottom=best.bottom+db*step;
+          if(top<.75||top>1.05||bottom<.4||bottom>.98||top-bottom<.09)continue;
+          const candidate=scoreLine(top,bottom);
+          if(candidate.score>refined.score)
+            refined={score:candidate.score,top,bottom,support:candidate.support};
+        }
+      }
+      best=refined;
+    }
+    // Require a consistently visible boundary. If the photo is already
+    // flattened or the tabletop has the same color, no automatic crop is safe.
+    if(best.score>=1.35 && best.support>=.55){
+      const top=Math.min(1,best.top),bottom=Math.min(1,best.bottom);
       return {
-        topRight:Math.min(1,best.top),
-        bottomRight:best.bottom,
+        topRight:top,
+        bottomRight:bottom,
         confidence:'detected',
-        note:'Automatically detected the photographed paper and corrected its perspective.'
+        note:'Paper edge found automatically: right edge at '+Math.round(top*100)+
+          '% (top) and '+Math.round(bottom*100)+'% (bottom).'
       };
     }
     return {
       topRight:1,bottomRight:1,
       confidence:'uncertain',
-      note:'Could not reliably distinguish the paper edge from the table. Try a brighter photo with all four corners visible.'
+      note:'Paper/table boundary could not be verified. Please upload the original PDF or a clearer full-page photo.'
     };
   }
 
