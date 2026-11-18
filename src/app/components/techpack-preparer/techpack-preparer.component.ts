@@ -45,6 +45,13 @@ import { ModelLoaderService } from '../../services/model-loader.service';
               </button>
               <p class="helper">Cut mode keeps only the panel-shaped artwork, removes the empty margins and uses transparency outside the shapes. This is a preview until you choose to download or apply it.</p>
             }
+            @if (shapesCut()) {
+              <button type="button" class="square" [disabled]="busy() || !hasPaper()"
+                (click)="toggleSquareMode()">
+                {{squareMode() ? 'SHOW ORIGINAL ASPECT RATIO' : 'MAKE 1:1'}}
+              </button>
+              <p class="helper">Fit the complete panel cutout into a square without cropping or stretching. The added space stays transparent.</p>
+            }
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
               {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
@@ -55,7 +62,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>{{shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
+          <h3>{{squareMode() ? 'Square 1:1 panel texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
           <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
           <div class="ruler-layout">
             <div class="ruler-origin">0,0</div>
@@ -97,6 +104,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
     button:disabled{opacity:.5;cursor:not-allowed}
 
+    .square{display:block;width:100%;background:#613d91;border-color:#a786d9;margin:6px 0 10px;font-weight:700}
     .cut-shapes{display:block;width:100%;background:#314a77;border-color:#7898e0;margin:6px 0 10px;font-weight:700}
     .cutout{display:block;width:100%;background:#13584c;border-color:#1c9d80;margin:6px 0 10px;font-weight:700}
     .apply{width:100%;background:#b91c1c;border-color:#b91c1c;margin-bottom:10px;font-weight:700}
@@ -139,6 +147,8 @@ export class TechpackPreparerComponent {
   private straightened:HTMLCanvasElement|null=null;
   private panelOnly:HTMLCanvasElement|null=null;
   private shapesOnly:HTMLCanvasElement|null=null;
+  private squareVersion:HTMLCanvasElement|null=null;
+  readonly squareMode=signal(false);
   readonly outsideRemoved=signal(false);
   readonly shapesCut=signal(false);
   readonly hasImage=signal(false);
@@ -160,6 +170,8 @@ export class TechpackPreparerComponent {
     this.hasImage.set(false);
     this.hasPaper.set(false);
     this.original=null;this.straightened=null;this.panelOnly=null;this.shapesOnly=null;
+    this.squareVersion=null;
+    this.squareMode.set(false);
     this.outsideRemoved.set(false);
     this.shapesCut.set(false);
     this.pageWidth.set(1);this.pageHeight.set(1);
@@ -219,6 +231,8 @@ export class TechpackPreparerComponent {
     this.straightened=orientation.canvas;
     this.panelOnly=null;
     this.shapesOnly=null;
+    this.squareVersion=null;
+    this.squareMode.set(false);
     this.outsideRemoved.set(false);
     this.shapesCut.set(false);
     this.showCanvas(this.straightened);
@@ -241,6 +255,8 @@ export class TechpackPreparerComponent {
   async toggleOutsidePanels(): Promise<void> {
     if (!this.straightened || this.busy()) return;
     if (this.outsideRemoved()) {
+      this.squareMode.set(false);
+      this.squareVersion=null;
       this.shapesCut.set(false);
       this.outsideRemoved.set(false);
       this.showCanvas(this.straightened);
@@ -253,6 +269,8 @@ export class TechpackPreparerComponent {
       this.panelOnly ??= await this.panelCutout.removeOutside(this.straightened);
       this.outsideRemoved.set(true);
       this.shapesCut.set(false);
+      this.squareMode.set(false);
+      this.squareVersion=null;
       this.showCanvas(this.panelOnly);
       this.status.set('Outside-panel marks hidden. Review the panel edges; click Show Full Paper to undo.');
     } catch (error) {
@@ -266,6 +284,8 @@ export class TechpackPreparerComponent {
   async toggleCutPanelShapes(): Promise<void> {
     if (!this.straightened || !this.outsideRemoved() || this.busy()) return;
     if (this.shapesCut()) {
+      this.squareMode.set(false);
+      this.squareVersion=null;
       this.shapesCut.set(false);
       if (this.panelOnly) this.showCanvas(this.panelOnly);
       this.status.set('Back to the full-size panel-only preview.');
@@ -275,6 +295,8 @@ export class TechpackPreparerComponent {
     this.status.set('Trimming surrounding margins to the 32 panel shapes...');
     try {
       this.shapesOnly ??= await this.panelCutout.cutToPanelShapes(this.straightened);
+      this.squareMode.set(false);
+      this.squareVersion=null;
       this.shapesCut.set(true);
       this.showCanvas(this.shapesOnly);
       this.status.set('Panel shapes cropped. Areas outside the outlines are transparent; click Show Uncropped Panels to go back.');
@@ -284,6 +306,40 @@ export class TechpackPreparerComponent {
     } finally { this.busy.set(false); }
   }
 
+  /**
+   * Square padding is applied only after the tight panel-shape crop. Every
+   * original pixel remains at its original size and the panel arrangement is
+   * preserved. The transparent outside area is never filled with white.
+   */
+  private makeSquareCanvas(source:HTMLCanvasElement):HTMLCanvasElement {
+    const size=Math.max(source.width,source.height);
+    const square=document.createElement('canvas');
+    square.width=size;
+    square.height=size;
+    const ctx=square.getContext('2d');
+    if(!ctx)throw new Error('Cannot create square panel texture');
+    ctx.clearRect(0,0,size,size);
+    const x=Math.floor((size-source.width)/2);
+    const y=Math.floor((size-source.height)/2);
+    ctx.drawImage(source,x,y);
+    return square;
+  }
+
+  toggleSquareMode():void {
+    if(this.busy() || !this.hasPaper() || !this.shapesCut() || !this.shapesOnly)return;
+    if(this.squareMode()){
+      this.squareMode.set(false);
+      this.squareVersion=null;
+      this.showCanvas(this.shapesOnly);
+      this.status.set('Returned to the original cropped aspect ratio.');
+      return;
+    }
+    this.squareVersion=this.makeSquareCanvas(this.shapesOnly);
+    this.squareMode.set(true);
+    this.showCanvas(this.squareVersion);
+    this.status.set('Created a 1:1 square PNG with transparent padding. No panels were cropped or stretched.');
+  }
+
   private finalCanvas():HTMLCanvasElement|null{
     return this.hasPaper()?this.previewRef.nativeElement:null;
   }
@@ -291,6 +347,7 @@ export class TechpackPreparerComponent {
     const canvas=this.finalCanvas();if(!canvas)return;
     try{
       const file=await this.pdf.canvasToFile(canvas,
+        this.squareMode() ? 'kora-panel-shapes-square.png' :
         this.shapesCut() ? 'kora-panel-shapes-transparent.png' : 'kora-paper-straightened.png','image/png');
       const url=URL.createObjectURL(file),link=document.createElement('a');
       link.href=url;link.download=file.name;link.click();
@@ -304,14 +361,16 @@ export class TechpackPreparerComponent {
     try{
       // Existing viewer expects a square texture. This contains the entire
       // straightened paper, fitted proportionally with white margins; no crops.
+      // Babylon expects a 1024px square texture. In 1:1 mode, use the full
+      // square without reintroducing white margins. Otherwise keep the
+      // original viewer mapping and transparency rules.
       const square=this.pdf.convertPdfPageTo3DBallTexture(canvas);
-      // For the cropped shape mode, keep outside areas transparent in the
-      // square texture too. The original artwork is never modified.
       if (this.shapesCut()) {
         const ctx=square.getContext('2d');
         if (!ctx) throw new Error('Cannot create transparent ball texture');
         ctx.clearRect(0,0,square.width,square.height);
-        const scale=Math.min(920/canvas.width,920/canvas.height);
+        const fit=this.squareMode() ? 1024 : 920;
+        const scale=Math.min(fit/canvas.width,fit/canvas.height);
         const width=canvas.width*scale,height=canvas.height*scale;
         ctx.drawImage(canvas,(1024-width)/2,(1024-height)/2,width,height);
       }

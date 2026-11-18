@@ -26,3 +26,18 @@ The existing Remove Outside Panels button continues to produce an uncropped whit
 **SHOW UNCROPPED PANELS** restores the previous panel-only preview, and **SHOW FULL PAPER** restores the untouched straightened sheet. Download a transparent PNG or apply the selected view to the ball. X/Y ruler coordinates update with the cropped canvas; ruler UI is excluded from the PNG.
 
 The printed outline registration remains approximate and can be rejected if unreliable. Tight masking can still clip color drawn beyond the printed panel border, so verify the result before export.
+
+
+## Fourth step: Make 1:1
+
+After **Cut to Panel Shapes**, click **MAKE 1:1**. This centers the already cropped
+panel image on a square transparent canvas whose side equals the original
+image's longest side. **No resizing, stretching or additional cropping** is
+performed. All 32 panel shapes retain their exact relative positions. Click
+**SHOW ORIGINAL ASPECT RATIO** to undo the square padding.
+
+Changing the earlier cleanup/crop stage clears square mode automatically so
+the exported preview always matches the active stage. Download yields
+`kora-panel-shapes-square.png` with alpha transparency, while Apply to Ball
+renders the square art into the Babylon viewer's required 1024×1024 texture.
+The X/Y ruler labels continue to track the actual currently displayed canvas.

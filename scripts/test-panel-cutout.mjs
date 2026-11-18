@@ -34,4 +34,9 @@ const component = readFileSync('src/app/components/techpack-preparer/techpack-pr
 assert.ok(component.includes('CUT TO PANEL SHAPES'));
 assert.ok(component.includes('SHOW UNCROPPED PANELS'));
 assert.ok(component.includes('SHOW FULL PAPER'));
-console.log('Panel cutout geometry and reversible transparent crop mode checked.');
+assert.ok(component.includes('MAKE 1:1'));
+assert.ok(component.includes('SHOW ORIGINAL ASPECT RATIO'));
+assert.ok(component.includes('makeSquareCanvas(source:HTMLCanvasElement)'));
+assert.ok(component.includes('this.squareVersion=this.makeSquareCanvas(this.shapesOnly)'));
+assert.ok(component.includes("this.squareMode() ? 'kora-panel-shapes-square.png'"));
+console.log('Panel cutout geometry, reversible crop and square padding mode checked.');
