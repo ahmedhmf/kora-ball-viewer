@@ -1,22 +1,14 @@
-# KORA paper-only perspective straightening
+# KORA automatic paper straightening
 
-The code now implements the actual photographed-paper correction demonstrated on the uploaded WhatsApp PDF. It does **not** mask, adjust, or interpret any football panels, drawings, handwriting or text.
+**No manual alignment.** On `/prepare-design`, upload one PDF or photo. The app:
+1. Reads the image or first PDF page.
+2. Locates the faint diagonal between the photographed sheet and the table.
+3. Corrects the entire sheet with one perspective transform in a browser worker.
+4. Immediately previews the full corrected paper; all drawings, printed text, and QR markings on it remain.
+5. Offers only `Apply straightened paper to ball` and `Download corrected PNG`.
 
-- `/prepare-design`: PDF/image upload, automatically seek the faint diagonal border between white paper and slightly green table, perspective-rectify the entire paper in a **single warp**, preview and download its PNG.
-- The provided sample has its page touching top, left and bottom image edges, with a slanted right boundary. Automatic border detection estimates the right-edge location at top and bottom; the sliders allow fine correction when paper/table contrast is too weak.
-- If the diagonal border cannot be detected reliably, show the **entire photo**, not an invented crop.
-- No forced 180° rotation; rotate 0/90/180/270 or fine-adjust up to 7° if necessary.
-- Apply the entire corrected paper to the existing 3D model using the existing square-with-white-padding texture method.
-- Uses only PDF.js already in the app and browser Canvas APIs plus a small plain-JS Worker. No OpenCV loading, external AI model, additional backend or new dependencies.
+The detection specifically handles the uploaded WhatsApp example, where the top, left and bottom of the paper meet the frame and the right edge slopes inward. If the paper/table boundary is too ambiguous, the app displays a clear error rather than silently exporting the table.
 
-The correction is **not** UV panel registration. The entire corrected document may not match the exact ball UV layout; the source graphics remain intact.
+No OpenCV startup, additional backend, panel-by-panel warp, masks, or manual edge sliders. An entire corrected A4 paper placed on the ball will still use the existing square-texture fitting; this does not solve UV registration.
 
-## Run
-```bash
-git switch feature/browser-scan-normalizer
-git pull origin feature/browser-scan-normalizer
-npm install
-npm start
-```
-
-Open the viewer, then choose `Upload page, straighten & apply to ball`. Test with `WhatsApp Scan 2026-09-25 at 21.25.58(1).pdf` and compare the preview to the previously approved paper-only correction. If the table appears, adjust the right-edge sliders and click `STRAIGHTEN PAPER`. After visual verification, apply to the ball.
+Test: `npm start`, then go to `/prepare-design` and upload `WhatsApp Scan 2026-09-25 at 21.25.58(1).pdf`.

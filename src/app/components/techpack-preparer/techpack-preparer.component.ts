@@ -1,7 +1,7 @@
 import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
-import { PaperStraightenerService, PaperDetection } from '../../services/paper-straightener.service';
+import { PaperStraightenerService } from '../../services/paper-straightener.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
@@ -18,7 +18,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
       <header>
         <div>
           <h2>STRAIGHTEN KORA PAPER</h2>
-          <p>Detect the photographed paper, remove the table outside it, and keep every mark on the sheet.</p>
+          <p>Upload your PDF or photo. The paper is detected and straightened automatically without altering its artwork.</p>
         </div>
         <a routerLink="/">Back to 3D Ball</a>
       </header>
@@ -31,34 +31,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (hasImage()) {
             <p class="file">{{fileName()}}</p>
-            <p class="helper">Paper boundary: {{detection()?.confidence === 'detected' ? 'detected' : 'uncertain'}}.
-              Only the paper is straightened; no panel or handwriting is removed.</p>
-            <div class="edge-controls">
-              <label>Top-right paper edge: {{(topRight()*100).toFixed(0)}}%
-                <input type="range" min="60" max="100" step="1"
-                  [value]="topRight()*100" (input)="setEdge('top',$event)">
-              </label>
-              <label>Bottom-right paper edge: {{(bottomRight()*100).toFixed(0)}}%
-                <input type="range" min="45" max="100" step="1"
-                  [value]="bottomRight()*100" (input)="setEdge('bottom',$event)">
-              </label>
-              <div class="buttons">
-                <button type="button" [disabled]="busy()" (click)="straighten()">STRAIGHTEN PAPER</button>
-                <button type="button" [disabled]="busy()" (click)="redetect()">Detect edges again</button>
-              </div>
-            </div>
-            <label>Rotate complete paper
-              <select [value]="quarterTurn()" (change)="changeQuarterTurn($event)">
-                <option value="0">0° — keep paper direction</option>
-                <option value="90">90° clockwise</option>
-                <option value="180">180°</option>
-                <option value="270">90° counterclockwise</option>
-              </select>
-            </label>
-            <label>Fine rotation: {{fineAngle().toFixed(1)}}°
-              <input type="range" min="-7" max="7" step="0.1"
-                [value]="fineAngle()" (input)="changeFineAngle($event)" />
-            </label>
+            <p class="helper">Paper detected and straightened automatically. All artwork, labels and margins on the sheet are preserved.</p>
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
               {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
@@ -69,7 +42,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>Paper-only preview</h3>
+          <h3>Automatically straightened paper</h3>
           <canvas #previewCanvas aria-label="Entire paper with perspective corrected, no table"></canvas>
         </section>
       </div>
@@ -90,9 +63,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     select{padding:8px;color:#fff;background:#202730;border:1px solid #555}
     button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
     button:disabled{opacity:.5;cursor:not-allowed}
-    .buttons{display:flex;gap:7px;margin-bottom:16px}.buttons button{flex:1;font-size:11px}
-    .edge-controls{padding:10px 8px;border:1px solid #424851;border-radius:6px;margin:12px 0}
-    .edge-controls label{font-size:11px}
+
     .apply{width:100%;background:#b91c1c;border-color:#b91c1c;margin-bottom:10px;font-weight:700}
     .controls>button:not(.apply){width:100%}
     .status{color:#e5e7eb;font-weight:600;overflow-wrap:anywhere}
@@ -116,11 +87,6 @@ export class TechpackPreparerComponent {
   readonly busy=signal(false);
   readonly status=signal('Upload the PDF or photo containing the photographed paper.');
   readonly fileName=signal('');
-  readonly detection=signal<PaperDetection|null>(null);
-  readonly topRight=signal(1);
-  readonly bottomRight=signal(1);
-  readonly quarterTurn=signal<0|90|180|270>(0);
-  readonly fineAngle=signal(0);
 
   async loadFile(event:Event):Promise<void>{
     const input=event.target as HTMLInputElement;
@@ -154,79 +120,33 @@ export class TechpackPreparerComponent {
       }else throw new Error('Please select a PDF, JPG, PNG or WEBP.');
       this.fileName.set(file.name);
       this.hasImage.set(true);
-      this.quarterTurn.set(0);
-      this.fineAngle.set(0);
-      this.detectEdges();
-      await this.straighten(true);
+      await this.straightenAutomatically();
     }catch(error){
       this.status.set('Could not process paper: '+String(error));
       console.error('[KORA paper]',error);
     }finally{this.busy.set(false);}
   }
 
-  private detectEdges():void{
+  /** One upload → paper detection → one continuous perspective warp → preview.
+   * No alignment controls or separate confirmation step required. */
+  private async straightenAutomatically():Promise<void>{
     if(!this.original)return;
+    this.status.set('Finding the paper border and straightening its perspective...');
     const guess=this.paper.detect(this.original);
-    this.detection.set(guess);
-    this.topRight.set(guess.topRight);
-    this.bottomRight.set(guess.bottomRight);
-    this.status.set(guess.note);
-  }
-  async redetect():Promise<void>{
-    if(!this.original||this.busy())return;
-    this.detectEdges();
-    await this.straighten();
-  }
-  setEdge(which:'top'|'bottom',event:Event):void{
-    const fraction=Number((event.target as HTMLInputElement).value)/100;
-    if(which==='top')this.topRight.set(fraction);
-    else this.bottomRight.set(fraction);
-    this.status.set('Paper edge adjusted. Click STRAIGHTEN PAPER to update the preview.');
-  }
-  async straighten(alreadyBusy=false):Promise<void>{
-    if(!this.original||(!alreadyBusy&&this.busy()))return;
-    this.busy.set(true);
-    this.status.set('Correcting the perspective of the entire paper...');
-    try{
-      const quad=this.paper.corners(this.original,this.topRight(),this.bottomRight());
-      const result=await this.paper.straighten(this.original,quad);
-      this.straightened=result;
-      this.hasPaper.set(true);
-      this.updatePreview();
-      this.status.set('Paper straightened. Table excluded; all content on the paper preserved.');
-    }catch(error){
-      this.status.set('Paper correction failed: '+String(error));
-      console.error('[KORA paper]',error);
-    }finally{this.busy.set(false);}
+    if(guess.confidence!=='detected'){
+      this.hasPaper.set(false);
+      throw new Error(guess.note);
+    }
+    const quad=this.paper.corners(this.original,guess.topRight,guess.bottomRight);
+    this.straightened=await this.paper.straighten(this.original,quad);
+    const source=this.straightened;
+    const preview=this.previewRef.nativeElement;
+    preview.width=source.width;preview.height=source.height;
+    preview.getContext('2d')!.drawImage(source,0,0);
+    this.hasPaper.set(true);
+    this.status.set('Paper straightened automatically. The table was excluded; all content on the paper is preserved.');
   }
 
-  private rotateCanvas(source:HTMLCanvasElement,angle:number):HTMLCanvasElement{
-    const rad=angle*Math.PI/180,co=Math.abs(Math.cos(rad)),si=Math.abs(Math.sin(rad));
-    const w=Math.ceil(source.width*co+source.height*si)+2;
-    const h=Math.ceil(source.width*si+source.height*co)+2;
-    const canvas=document.createElement('canvas');
-    canvas.width=w;canvas.height=h;
-    const ctx=canvas.getContext('2d')!;
-    ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
-    ctx.translate(w/2,h/2);ctx.rotate(rad);
-    ctx.drawImage(source,-source.width/2,-source.height/2);
-    return canvas;
-  }
-  private updatePreview():void{
-    if(!this.straightened)return;
-    const image=this.rotateCanvas(this.straightened,this.quarterTurn()+this.fineAngle());
-    const preview=this.previewRef.nativeElement;
-    preview.width=image.width;preview.height=image.height;
-    preview.getContext('2d')!.drawImage(image,0,0);
-  }
-  changeQuarterTurn(event:Event):void{
-    this.quarterTurn.set(Number((event.target as HTMLSelectElement).value) as 0|90|180|270);
-    this.updatePreview();
-  }
-  changeFineAngle(event:Event):void{
-    this.fineAngle.set(Number((event.target as HTMLInputElement).value));
-    this.updatePreview();
-  }
   private finalCanvas():HTMLCanvasElement|null{
     return this.hasPaper()?this.previewRef.nativeElement:null;
   }

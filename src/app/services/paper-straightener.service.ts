@@ -73,19 +73,19 @@ export class PaperStraightenerService {
         topRight:Math.min(1,best.top),
         bottomRight:best.bottom,
         confidence:'detected',
-        note:'Paper/table boundary detected. Review the straightened page before applying.'
+        note:'Automatically detected the photographed paper and corrected its perspective.'
       };
     }
     return {
       topRight:1,bottomRight:1,
       confidence:'uncertain',
-      note:'Paper boundary is too faint to detect reliably. Showing the complete image; adjust the paper-edge controls if the table is visible.'
+      note:'Could not reliably distinguish the paper edge from the table. Try a brighter photo with all four corners visible.'
     };
   }
 
-  /** The left/top/bottom corners meet the photograph's bounds for this scan.
-   * The right edge is adjustable, and the entire quadrilateral is corrected
-   * with a single projective transform rather than cutting individual panels. */
+  /** On this WhatsApp scan, the left/top/bottom paper edges meet the photo
+   * bounds and the right edge is a long diagonal. One projective transform
+   * straightens the entire sheet without editing football panels. */
   corners(source: HTMLCanvasElement, topRight: number, bottomRight: number): PaperQuad {
     const w=source.width-1,h=source.height-1;
     return {
