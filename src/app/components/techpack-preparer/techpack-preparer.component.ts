@@ -38,6 +38,13 @@ import { ModelLoaderService } from '../../services/model-loader.service';
               {{outsideRemoved() ? 'SHOW FULL PAPER' : 'REMOVE OUTSIDE PANELS'}}
             </button>
             <p class="helper">Optional preview: removes markings around the 32 panels without changing the original straightened page. You can switch back at any time.</p>
+            @if (outsideRemoved()) {
+              <button type="button" class="cut-shapes" [disabled]="busy() || !hasPaper()"
+                (click)="toggleCutPanelShapes()">
+                {{shapesCut() ? 'SHOW UNCROPPED PANELS' : 'CUT TO PANEL SHAPES'}}
+              </button>
+              <p class="helper">Cut mode keeps only the panel-shaped artwork, removes the empty margins and uses transparency outside the shapes. This is a preview until you choose to download or apply it.</p>
+            }
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
               {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
@@ -48,7 +55,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>{{outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
+          <h3>{{shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
           <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
           <div class="ruler-layout">
             <div class="ruler-origin">0,0</div>
@@ -90,6 +97,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
     button:disabled{opacity:.5;cursor:not-allowed}
 
+    .cut-shapes{display:block;width:100%;background:#314a77;border-color:#7898e0;margin:6px 0 10px;font-weight:700}
     .cutout{display:block;width:100%;background:#13584c;border-color:#1c9d80;margin:6px 0 10px;font-weight:700}
     .apply{width:100%;background:#b91c1c;border-color:#b91c1c;margin-bottom:10px;font-weight:700}
     .controls>button:not(.apply){width:100%}
@@ -111,7 +119,12 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     .y-tick span{position:absolute;right:14px;top:-7px;font-size:10px;white-space:nowrap}
     .axis-name{position:absolute;right:5px;top:3px;font-size:10px;color:#91a1b4}
     .axis-name-y{position:absolute;left:4px;bottom:5px;font-size:10px;color:#91a1b4}
-    .preview canvas{display:block;width:100%;height:auto;max-width:none;max-height:none;background:white}
+    .preview canvas{display:block;width:100%;height:auto;max-width:none;max-height:none;
+      background-color:#fff;background-image:linear-gradient(45deg,#e9edf2 25%,transparent 25%),
+      linear-gradient(-45deg,#e9edf2 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#e9edf2 75%),
+      linear-gradient(-45deg,transparent 75%,#e9edf2 75%);
+      background-position:0 0,0 10px,10px -10px,-10px 0;background-size:20px 20px}
     @media(max-width:800px){.workspace{grid-template-columns:1fr}}
   `]
 })
@@ -125,7 +138,9 @@ export class TechpackPreparerComponent {
   private original:HTMLCanvasElement|null=null;
   private straightened:HTMLCanvasElement|null=null;
   private panelOnly:HTMLCanvasElement|null=null;
+  private shapesOnly:HTMLCanvasElement|null=null;
   readonly outsideRemoved=signal(false);
+  readonly shapesCut=signal(false);
   readonly hasImage=signal(false);
   readonly hasPaper=signal(false);
   readonly busy=signal(false);
@@ -144,8 +159,9 @@ export class TechpackPreparerComponent {
     this.busy.set(true);
     this.hasImage.set(false);
     this.hasPaper.set(false);
-    this.original=null;this.straightened=null;this.panelOnly=null;
+    this.original=null;this.straightened=null;this.panelOnly=null;this.shapesOnly=null;
     this.outsideRemoved.set(false);
+    this.shapesCut.set(false);
     this.pageWidth.set(1);this.pageHeight.set(1);
     this.status.set('Reading scanned page...');
     try{
@@ -202,7 +218,9 @@ export class TechpackPreparerComponent {
     const orientation=await this.paper.orientPrintedSheet(corrected);
     this.straightened=orientation.canvas;
     this.panelOnly=null;
+    this.shapesOnly=null;
     this.outsideRemoved.set(false);
+    this.shapesCut.set(false);
     this.showCanvas(this.straightened);
     this.hasPaper.set(true);
     this.status.set(orientation.reliable
@@ -223,6 +241,7 @@ export class TechpackPreparerComponent {
   async toggleOutsidePanels(): Promise<void> {
     if (!this.straightened || this.busy()) return;
     if (this.outsideRemoved()) {
+      this.shapesCut.set(false);
       this.outsideRemoved.set(false);
       this.showCanvas(this.straightened);
       this.status.set('Showing the full straightened paper again. No data was lost.');
@@ -233,11 +252,35 @@ export class TechpackPreparerComponent {
     try {
       this.panelOnly ??= await this.panelCutout.removeOutside(this.straightened);
       this.outsideRemoved.set(true);
+      this.shapesCut.set(false);
       this.showCanvas(this.panelOnly);
       this.status.set('Outside-panel marks hidden. Review the panel edges; click Show Full Paper to undo.');
     } catch (error) {
       this.status.set('Outside-panel cleanup failed: '+String(error));
       console.error('[KORA panel cutout]',error);
+    } finally { this.busy.set(false); }
+  }
+
+  /** Third, optional step: tightly trim all 32 panel shapes while preserving
+   * their original positions relative to one another and transparency. */
+  async toggleCutPanelShapes(): Promise<void> {
+    if (!this.straightened || !this.outsideRemoved() || this.busy()) return;
+    if (this.shapesCut()) {
+      this.shapesCut.set(false);
+      if (this.panelOnly) this.showCanvas(this.panelOnly);
+      this.status.set('Back to the full-size panel-only preview.');
+      return;
+    }
+    this.busy.set(true);
+    this.status.set('Trimming surrounding margins to the 32 panel shapes...');
+    try {
+      this.shapesOnly ??= await this.panelCutout.cutToPanelShapes(this.straightened);
+      this.shapesCut.set(true);
+      this.showCanvas(this.shapesOnly);
+      this.status.set('Panel shapes cropped. Areas outside the outlines are transparent; click Show Uncropped Panels to go back.');
+    } catch (error) {
+      this.status.set('Could not cut panel shapes: '+String(error));
+      console.error('[KORA panel shape crop]',error);
     } finally { this.busy.set(false); }
   }
 
@@ -247,7 +290,8 @@ export class TechpackPreparerComponent {
   async download():Promise<void>{
     const canvas=this.finalCanvas();if(!canvas)return;
     try{
-      const file=await this.pdf.canvasToFile(canvas,'kora-paper-straightened.png','image/png');
+      const file=await this.pdf.canvasToFile(canvas,
+        this.shapesCut() ? 'kora-panel-shapes-transparent.png' : 'kora-paper-straightened.png','image/png');
       const url=URL.createObjectURL(file),link=document.createElement('a');
       link.href=url;link.download=file.name;link.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -261,6 +305,16 @@ export class TechpackPreparerComponent {
       // Existing viewer expects a square texture. This contains the entire
       // straightened paper, fitted proportionally with white margins; no crops.
       const square=this.pdf.convertPdfPageTo3DBallTexture(canvas);
+      // For the cropped shape mode, keep outside areas transparent in the
+      // square texture too. The original artwork is never modified.
+      if (this.shapesCut()) {
+        const ctx=square.getContext('2d');
+        if (!ctx) throw new Error('Cannot create transparent ball texture');
+        ctx.clearRect(0,0,square.width,square.height);
+        const scale=Math.min(920/canvas.width,920/canvas.height);
+        const width=canvas.width*scale,height=canvas.height*scale;
+        ctx.drawImage(canvas,(1024-width)/2,(1024-height)/2,width,height);
+      }
       const file=await this.pdf.canvasToFile(square,'kora-corrected-paper.png','image/png');
       await this.router.navigate(['/']);
       await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));

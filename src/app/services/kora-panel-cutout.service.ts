@@ -14,7 +14,13 @@ export class KoraPanelCutoutService {
   private readonly referenceHeight = 1024;
   private readonly polygons: number[][][] = [[[353,63],[400,97],[382,152],[325,152],[307,97]],[[250,84],[306,96],[321,140],[285,195],[229,183],[211,130]],[[458,85],[496,131],[477,184],[422,195],[383,150],[402,96]],[[324,152],[388,159],[412,201],[382,251],[322,247],[296,200]],[[413,202],[468,214],[475,271],[423,295],[383,252]],[[295,202],[324,253],[284,295],[233,272],[238,217]],[[325,252],[382,252],[411,300],[382,352],[325,352],[298,307]],[[478,329],[521,367],[507,425],[454,442],[411,403],[424,346]],[[229,329],[285,348],[296,404],[254,442],[197,422],[186,368]],[[324,354],[382,353],[400,408],[353,442],[307,408]],[[590,365],[623,417],[601,465],[544,471],[512,417],[534,371]],[[117,366],[174,372],[194,416],[163,472],[106,466],[85,420]],[[455,442],[509,425],[539,465],[509,518],[454,500]],[[402,414],[454,443],[454,500],[405,529],[353,500],[353,443]],[[302,414],[353,443],[353,500],[303,530],[253,500],[253,443]],[[198,426],[253,444],[253,500],[200,519],[164,473]],[[163,472],[196,524],[173,572],[116,577],[87,519],[107,477]],[[544,471],[601,477],[623,525],[591,577],[535,572],[511,523]],[[353,502],[400,536],[382,590],[325,590],[308,541]],[[454,501],[509,519],[521,576],[478,614],[422,595],[411,540]],[[253,501],[296,539],[283,597],[229,614],[186,575],[199,519]],[[324,591],[388,598],[412,640],[382,690],[322,686],[296,639]],[[295,641],[324,691],[284,734],[232,709],[238,654]],[[412,641],[470,661],[475,710],[422,734],[383,691]],[[325,691],[382,691],[411,739],[382,791],[325,791],[298,746]],[[422,748],[477,760],[496,815],[458,858],[402,847],[385,800]],[[285,748],[321,803],[305,847],[250,859],[211,816],[230,760]],[[324,793],[382,792],[400,847],[350,879],[307,847]],[[404,853],[454,882],[454,940],[404,969],[354,940],[354,882]],[[302,853],[353,882],[353,940],[303,969],[253,940],[253,882]],[[201,865],[253,883],[253,939],[198,958],[164,911]],[[509,864],[543,912],[508,958],[454,939],[454,883]]];
 
-  async removeOutside(source: HTMLCanvasElement): Promise<HTMLCanvasElement> {
+  /** A transparent, trimmed polygon-only PNG uses the same verified alignment
+   * as the existing white-background preview, but a tighter edge bleed. */
+  async cutToPanelShapes(source: HTMLCanvasElement): Promise<HTMLCanvasElement> {
+    return this.removeOutside(source, 'cut');
+  }
+
+  async removeOutside(source: HTMLCanvasElement, mode: 'white' | 'cut' = 'white'): Promise<HTMLCanvasElement> {
     if (source.width < 300 || source.height < 400)
       throw new Error('The straightened image is too small for panel detection.');
     const aspect = source.width / source.height;
@@ -139,7 +145,9 @@ export class KoraPanelCutoutService {
     const scaleX = source.width/width, scaleY = source.height/height;
     maskCtx.save();
     maskCtx.scale(scaleX, scaleY);
-    maskCtx.lineWidth = 36; // 18px safety margin on either side
+    maskCtx.lineWidth = mode === 'cut' ? 8 : 36;
+    // The original white preview keeps 18px bleed. Cut mode follows the
+    // actual polygons much more closely, retaining a 4px protection margin.
     for (const polygon of this.polygons) {
       maskCtx.beginPath();
       polygon.forEach(([x,y],index) => {
@@ -164,6 +172,25 @@ export class KoraPanelCutoutService {
     mctx.globalCompositeOperation = 'destination-in';
     mctx.drawImage(mask,0,0);
     mctx.globalCompositeOperation = 'source-over';
+    if (mode === 'cut') {
+      // Find the bounding rectangle of the combined panel silhouette, not
+      // non-white source pixels (white panel faces must remain fully intact).
+      const all = this.polygons.flat();
+      const left = Math.max(0, Math.floor(Math.min(...all.map(([x])=>x*best[2]+best[0]))*scaleX - 5*scaleX));
+      const right = Math.min(source.width, Math.ceil(Math.max(...all.map(([x])=>x*best[2]+best[0]))*scaleX + 5*scaleX));
+      const top = Math.max(0, Math.floor(Math.min(...all.map(([,y])=>y*best[3]+best[1]))*scaleY - 5*scaleY));
+      const bottom = Math.min(source.height, Math.ceil(Math.max(...all.map(([,y])=>y*best[3]+best[1]))*scaleY + 5*scaleY));
+      if (right-left<100 || bottom-top<100)
+        throw new Error('Panel-only bounds could not be determined safely.');
+      const cropped = document.createElement('canvas');
+      cropped.width = right-left;
+      cropped.height = bottom-top;
+      const croppedCtx = cropped.getContext('2d');
+      if (!croppedCtx) throw new Error('Cannot crop transparent panel artwork');
+      // Keep outside-panel alpha zero; no white background is painted here.
+      croppedCtx.drawImage(masked,left,top,cropped.width,cropped.height,0,0,cropped.width,cropped.height);
+      return cropped;
+    }
     const finished = document.createElement('canvas');
     finished.width = source.width;
     finished.height = source.height;

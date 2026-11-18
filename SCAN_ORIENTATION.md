@@ -18,3 +18,11 @@ npm install
 npm start
 ```
 Upload the original WhatsApp PDF, click **REMOVE OUTSIDE PANELS**, inspect every panel boundary, try **SHOW FULL PAPER**, then optionally download or apply to ball.
+
+## New third button: Cut to Panel Shapes
+
+The existing Remove Outside Panels button continues to produce an uncropped white-background image. After pressing it, the **CUT TO PANEL SHAPES** button appears. It uses the same reference alignment but clips directly to the union of the 32 printed panel polygons, with only a 4px safety margin around the outlines, and then **trims the image canvas to their combined bounding rectangle**. The area between/outside shapes has transparent alpha; no panel is moved, separately warped, rotated or rearranged. This is distinct from trimming away every white pixel—blank white panel faces are preserved.
+
+**SHOW UNCROPPED PANELS** restores the previous panel-only preview, and **SHOW FULL PAPER** restores the untouched straightened sheet. Download a transparent PNG or apply the selected view to the ball. X/Y ruler coordinates update with the cropped canvas; ruler UI is excluded from the PNG.
+
+The printed outline registration remains approximate and can be rejected if unreliable. Tight masking can still clip color drawn beyond the printed panel border, so verify the result before export.

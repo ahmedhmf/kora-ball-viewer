@@ -23,4 +23,15 @@ assert.ok(panels.some(p=>inside(350,390,p)), 'Center football artwork must be ke
 for(const [x,y] of [[25,910],[25,40],[700,960],[705,300]]){
   assert.ok(!panels.some(p=>inside(x,y,p)),'Outer page content leaked into net mask');
 }
-console.log('Panel cutout geometry checked: 32 polygons, center kept, margins excluded.');
+// The cut step should produce a distinct reversible transparent output,
+// leaving the existing full-paper and white-mask modes unchanged.
+assert.ok(source.includes("async cutToPanelShapes(source: HTMLCanvasElement)"));
+assert.ok(source.includes("return this.removeOutside(source, 'cut')"));
+assert.ok(source.includes("mode === 'cut' ? 8 : 36"));
+assert.ok(source.includes("if (mode === 'cut')"));
+assert.ok(source.includes("return cropped;"));
+const component = readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
+assert.ok(component.includes('CUT TO PANEL SHAPES'));
+assert.ok(component.includes('SHOW UNCROPPED PANELS'));
+assert.ok(component.includes('SHOW FULL PAPER'));
+console.log('Panel cutout geometry and reversible transparent crop mode checked.');
