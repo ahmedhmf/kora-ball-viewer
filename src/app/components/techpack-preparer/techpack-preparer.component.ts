@@ -3,6 +3,7 @@ import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
 import { KoraPanelCutoutService } from '../../services/kora-panel-cutout.service';
+import { KoraUvAlignService } from '../../services/kora-uv-align.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
@@ -52,6 +53,13 @@ import { ModelLoaderService } from '../../services/model-loader.service';
               </button>
               <p class="helper">Make a white 1:1 texture aligned to the KORA ball's UV coordinates. All 32 panels stay together, without cropping or individual panel warps.</p>
             }
+            @if (squareMode()) {
+              <button type="button" class="uv" [disabled]="busy() || !hasPaper()"
+                (click)="toggleUvAlignment()">
+                {{uvAligned() ? 'SHOW ORIGINAL 1:1 IMAGE' : 'ALIGN PANELS TO 3D BALL'}}
+              </button>
+              <p class="helper">Optional: precisely map each printed panel onto its matching 3D-model UV island. Compare against the original square output.</p>
+            }
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
               {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
@@ -62,7 +70,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>{{squareMode() ? 'UV-aligned 1:1 ball texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
+          <h3>{{uvAligned() ? '32-panel exact OBJ UV atlas' : squareMode() ? 'UV-aligned 1:1 ball texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
           <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
           <div class="ruler-layout">
             <div class="ruler-origin">0,0</div>
@@ -104,6 +112,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
     button:disabled{opacity:.5;cursor:not-allowed}
 
+    .uv{display:block;width:100%;background:#74532a;border-color:#d7a75e;margin:6px 0 10px;font-weight:700}
     .square{display:block;width:100%;background:#613d91;border-color:#a786d9;margin:6px 0 10px;font-weight:700}
     .cut-shapes{display:block;width:100%;background:#314a77;border-color:#7898e0;margin:6px 0 10px;font-weight:700}
     .cutout{display:block;width:100%;background:#13584c;border-color:#1c9d80;margin:6px 0 10px;font-weight:700}
@@ -141,6 +150,7 @@ export class TechpackPreparerComponent {
   private readonly pdf=inject(PdfConverterService);
   private readonly paper=inject(PaperStraightenerService);
   private readonly panelCutout=inject(KoraPanelCutoutService);
+  private readonly uvAligner=inject(KoraUvAlignService);
   private readonly model=inject(ModelLoaderService);
   private readonly router=inject(Router);
   private original:HTMLCanvasElement|null=null;
@@ -148,6 +158,8 @@ export class TechpackPreparerComponent {
   private panelOnly:HTMLCanvasElement|null=null;
   private shapesOnly:HTMLCanvasElement|null=null;
   private squareVersion:HTMLCanvasElement|null=null;
+  private uvVersion:HTMLCanvasElement|null=null;
+  readonly uvAligned=signal(false);
   readonly squareMode=signal(false);
   readonly outsideRemoved=signal(false);
   readonly shapesCut=signal(false);
@@ -171,6 +183,8 @@ export class TechpackPreparerComponent {
     this.hasPaper.set(false);
     this.original=null;this.straightened=null;this.panelOnly=null;this.shapesOnly=null;
     this.squareVersion=null;
+    this.uvVersion=null;
+    this.uvAligned.set(false);
     this.squareMode.set(false);
     this.outsideRemoved.set(false);
     this.shapesCut.set(false);
@@ -232,6 +246,8 @@ export class TechpackPreparerComponent {
     this.panelOnly=null;
     this.shapesOnly=null;
     this.squareVersion=null;
+    this.uvVersion=null;
+    this.uvAligned.set(false);
     this.squareMode.set(false);
     this.outsideRemoved.set(false);
     this.shapesCut.set(false);
@@ -255,6 +271,10 @@ export class TechpackPreparerComponent {
   async toggleOutsidePanels(): Promise<void> {
     if (!this.straightened || this.busy()) return;
     if (this.outsideRemoved()) {
+      this.uvAligned.set(false);
+      this.uvVersion=null;
+      this.uvAligned.set(false);
+      this.uvVersion=null;
       this.squareMode.set(false);
       this.squareVersion=null;
       this.shapesCut.set(false);
@@ -284,6 +304,8 @@ export class TechpackPreparerComponent {
   async toggleCutPanelShapes(): Promise<void> {
     if (!this.straightened || !this.outsideRemoved() || this.busy()) return;
     if (this.shapesCut()) {
+      this.uvAligned.set(false);
+      this.uvVersion=null;
       this.squareMode.set(false);
       this.squareVersion=null;
       this.shapesCut.set(false);
@@ -295,6 +317,8 @@ export class TechpackPreparerComponent {
     this.status.set('Trimming surrounding margins to the 32 panel shapes...');
     try {
       this.shapesOnly ??= await this.panelCutout.cutToPanelShapes(this.straightened);
+      this.uvAligned.set(false);
+      this.uvVersion=null;
       this.squareMode.set(false);
       this.squareVersion=null;
       this.shapesCut.set(true);
@@ -318,16 +342,47 @@ export class TechpackPreparerComponent {
   toggleSquareMode():void {
     if(this.busy() || !this.hasPaper() || !this.shapesCut() || !this.shapesOnly)return;
     if(this.squareMode()){
+      this.uvAligned.set(false);
+      this.uvVersion=null;
       this.squareMode.set(false);
       this.squareVersion=null;
       this.showCanvas(this.shapesOnly);
       this.status.set('Returned to the original cropped aspect ratio.');
       return;
     }
+    this.uvAligned.set(false);
+    this.uvVersion=null;
     this.squareVersion=this.makeSquareCanvas(this.shapesOnly);
     this.squareMode.set(true);
     this.showCanvas(this.squareVersion);
     this.status.set('Created a UV-aligned 1:1 white texture for the KORA ball. No panel was independently moved.');
+  }
+
+  /** Optional final mapping: samples the original corrected sheet into the
+   * ACTUAL OBJ UV island polygons instead of globally positioning the net. */
+  async toggleUvAlignment():Promise<void>{
+    if(this.busy() || !this.squareMode() || !this.straightened || !this.squareVersion)return;
+    if(this.uvAligned()){
+      this.uvAligned.set(false);
+      this.showCanvas(this.squareVersion);
+      this.status.set('Restored the original 1:1 square result.');
+      return;
+    }
+    this.busy.set(true);
+    this.status.set('Aligning each of the 32 paper panels with the OBJ UV layout...');
+    try {
+      // Registration is inherited from the previous Cut to Panel Shapes
+      // step, but the source pixels come from the full upright sheet.
+      const panels=this.panelCutout.getRegisteredPanels(this.straightened);
+      await new Promise<void>(resolve=>setTimeout(resolve,0));
+      this.uvVersion??=this.uvAligner.render(this.straightened,panels);
+      this.uvAligned.set(true);
+      this.showCanvas(this.uvVersion);
+      this.status.set('Mapped all 32 panels to model UVs. Check ball seams; use Show Original 1:1 Image to compare.');
+    } catch(error){
+      this.status.set('Could not align UV panels: '+String(error));
+      console.error('[KORA UV map]',error);
+    } finally {this.busy.set(false);}
   }
 
   private finalCanvas():HTMLCanvasElement|null{
@@ -337,6 +392,7 @@ export class TechpackPreparerComponent {
     const canvas=this.finalCanvas();if(!canvas)return;
     try{
       const file=await this.pdf.canvasToFile(canvas,
+        this.uvAligned() ? 'kora-uv-aligned-ball-1024.png' :
         this.squareMode() ? 'kora-panel-shapes-square.png' :
         this.shapesCut() ? 'kora-panel-shapes-transparent.png' : 'kora-paper-straightened.png','image/png');
       const url=URL.createObjectURL(file),link=document.createElement('a');
@@ -351,6 +407,8 @@ export class TechpackPreparerComponent {
     try{
       // The final 1:1 image is already 1024x1024 in the OBJ's UV atlas.
       // Do NOT fit/pad it again: a second transform reintroduces the offset.
+      // Both final 1:1 modes already render the intended OBJ atlas at 1024².
+      // Never resize/recenter them again at the ball texture stage.
       const square=this.squareMode()
         ? canvas
         : this.pdf.convertPdfPageTo3DBallTexture(canvas);

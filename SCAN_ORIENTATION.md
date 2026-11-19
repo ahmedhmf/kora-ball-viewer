@@ -69,3 +69,25 @@ custom OBJ models may have a different UV atlas. Because the printed scan's
 panel geometry and model UV atlas are not perfectly identical, this global
 fit reduces systematic offset but does **not** guarantee every individual
 seam will match perfectly.
+
+
+## New final option: Match the exact 32 OBJ UV islands
+
+The previous **Make 1:1** global positioning remains available and untouched.
+After Make 1:1, **ALIGN PANELS TO 3D BALL** uses a different approach: it
+maps the 32 printed paper panel polygons individually onto the matching
+32 UV islands extracted from the actual 32-CLB.obj UV vertices and face
+topology. The OBJ has 12 pentagonal and 20 hexagonal main UV islands. The
+islands have been matched to the same 32 blank-print polygon indices using
+their topology and proximity, and each panel is piecewise-affine warped onto
+its own UV island. Pixels are sampled from the original, complete,
+perspective-straightened page with the alignment computed by the existing
+panel-cutting stage. The atlas is 1024×1024 with a solid white background.
+It is passed to Babylon **without any generic resize or padding**.
+
+**SHOW ORIGINAL 1:1 IMAGE** restores the previous global-positioning output.
+The new PNG filename is `kora-uv-aligned-ball-1024.png`.
+
+The panel boundaries correspond to the OBJ UV islands. Photo detection of
+printed borders is still approximate, so real-world corner accuracy is not
+guaranteed at 100% on blurry or distorted photographs.

@@ -11,7 +11,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "test:paper": "node scripts/test-paper-perspective.mjs",
-    "test:panel-cutout": "node scripts/test-panel-cutout.mjs"
+    "test:panel-cutout": "node scripts/test-panel-cutout.mjs",
+    "test:uv-alignment": "node scripts/test-uv-alignment.mjs"
   },
   "private": true,
   "packageManager": "npm@11.13.0",

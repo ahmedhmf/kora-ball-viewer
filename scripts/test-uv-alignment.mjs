@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const metadata=readFileSync('src/app/services/kora-uv-panel-corners.ts','utf8');
+const match=metadata.match(/export const KORA_UV_PANEL_CORNERS: number\[\]\[\]\[\] = (\[[\s\S]*?\]);/);
+assert.ok(match,'OBJ UV metadata');
+const targets=JSON.parse(match[1]);
+const source=readFileSync('src/app/services/kora-panel-cutout.service.ts','utf8');
+const ref=source.match(/private readonly polygons: number\[\]\[\]\[\] = (\[[\s\S]*?\]);/);
+assert.ok(ref,'Reference panel polygons');
+const panels=JSON.parse(ref[1]);
+assert.equal(targets.length,32);
+assert.equal(panels.length,32);
+assert.equal(targets.filter(p=>p.length===5).length,12);
+assert.equal(targets.filter(p=>p.length===6).length,20);
+let error=0;
+for(let i=0;i<32;i++){
+  const src=panels[i],uv=targets[i];
+  assert.equal(src.length,uv.length,'Panel shape '+i);
+  assert.ok(uv.every(([x,y])=>x>=0&&y>=0&&x<=1024&&y<=1024));
+  const center=p=>[p.reduce((s,v)=>s+v[0],0)/p.length,p.reduce((s,v)=>s+v[1],0)/p.length];
+  const a=center(src),b=center(uv);
+  const d=Math.hypot(b[0]-(a[0]*1.09+116),b[1]-(a[1]*1.10-53));
+  assert.ok(d<12,'Wrong OBJ UV island for panel '+(i+1));
+  error=Math.max(error,d);
+}
+const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
+assert.ok(component.includes('ALIGN PANELS TO 3D BALL'));
+assert.ok(component.includes('SHOW ORIGINAL 1:1 IMAGE'));
+assert.ok(component.includes('this.uvAligner.render(this.straightened,panels)'));
+assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
+console.log('32 UV islands registered (12 pentagons and 20 hexagons); max center error '+error.toFixed(2)+'px.');
