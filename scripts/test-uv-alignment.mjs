@@ -25,8 +25,8 @@ for(let i=0;i<32;i++){
 }
 const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
 assert.ok(component.includes('PREPARE BALL TEXTURE'));
-assert.ok(component.includes('this.panelCutout.placeFullSheetInBallUV(corrected,panels)'));
-assert.ok(component.includes('this.panelCutout.registerPanels(corrected)'));
+assert.ok(component.includes('this.scanNet.render(corrected)'));
+assert.ok(component.includes('this.scanNet.render(corrected)'));
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
 assert.ok(source.includes("if (mode === 'register') return source;"));
 assert.ok(!source.includes('refineKoraPanelCorners'), 'Unsafe per-edge snapping must not return');
