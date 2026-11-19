@@ -13,7 +13,8 @@
     "test:paper": "node scripts/test-paper-perspective.mjs",
     "test:panel-cutout": "node scripts/test-panel-cutout.mjs",
     "test:uv-alignment": "node scripts/test-uv-alignment.mjs",
-    "test:uv-raster": "node scripts/test-uv-raster.mjs"
+    "test:uv-raster": "node scripts/test-uv-raster.mjs",
+    "test:panel-registration": "node scripts/test-panel-registration.mjs"
   },
   "private": true,
   "packageManager": "npm@11.13.0",
