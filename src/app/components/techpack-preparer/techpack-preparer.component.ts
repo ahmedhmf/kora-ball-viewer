@@ -2,12 +2,13 @@ import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core'
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
-import { KoraScanNetService } from '../../services/kora-scan-net.service';
+import { KoraPanelCutoutService } from '../../services/kora-panel-cutout.service';
+import { KoraUvAlignService } from '../../services/kora-uv-align.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
- * One-click A3 preparation: straighten the page when needed and place its
- * entire print into the OBJ square atlas. No panel is independently warped.
+ * One-click A3 preparation: rectify and orient the photographed paper,
+ * register its 32 print polygons, then sample them into the real OBJ UV islands.
  */
 @Component({
   selector: 'app-techpack-preparer',
@@ -33,7 +34,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Finds the actual grey football-panel outlines, straightens QR orientation, and centers the whole printed design on white. No individual panels are altered.</p>
+            <p class="helper">Straightens the A3 scan, registers all 32 printed panels and maps their artwork to the actual 32-CLB.obj UV islands. Creates a white 1024 × 1024 ball texture.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -75,7 +76,8 @@ export class TechpackPreparerComponent {
   @ViewChild('previewCanvas', { static: true }) private previewRef!: ElementRef<HTMLCanvasElement>;
   private readonly pdf = inject(PdfConverterService);
   private readonly paper = inject(PaperStraightenerService);
-  private readonly scanNet = inject(KoraScanNetService);
+  private readonly panelCutout = inject(KoraPanelCutoutService);
+  private readonly uvAligner = inject(KoraUvAlignService);
   private readonly model = inject(ModelLoaderService);
   private readonly router = inject(Router);
 
@@ -175,15 +177,21 @@ export class TechpackPreparerComponent {
       const ratio=corrected.width/corrected.height;
       if (ratio < .62 || ratio > .79)
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
-      this.status.set('Detecting actual printed outlines in the A3 scan...');
+      this.status.set('Registering all 32 printed panel boundaries...');
+      // Register against the ENTIRE perspective-corrected scan. Do not
+      // supply a masked, cropped or re-centered preview to the UV renderer:
+      // those images no longer share the printed template's coordinates.
+      const panels=await this.panelCutout.registerPanels(corrected);
+      this.status.set('Mapping the registered panels into the OBJ UV islands...');
+      await new Promise<void>(resolve=>setTimeout(resolve,0));
+      const atlas=this.uvAligner.render(corrected,panels);
       this.preparedSource=corrected;
-      const atlas=this.scanNet.render(corrected);
       this.ready = atlas;
       this.prepared.set(true);
       this.showCanvas(atlas);
       this.status.set(orientationUncertain
-        ? 'Texture prepared. QR orientation was uncertain: check the preview, and use Rotate entire design 180° if upside down.'
-        : 'Ready: whole football print centered, with all panel artwork preserved.');
+        ? 'UV texture prepared. QR orientation is uncertain: check the 3D ball and use Rotate entire design 180° if panels are upside down.'
+        : 'Ready: 32 registered print panels mapped into the OBJ UV texture.');
     } catch (error) {
       this.prepared.set(false);
       this.ready = null;
@@ -214,7 +222,8 @@ export class TechpackPreparerComponent {
       ctx.translate(rotated.width,rotated.height);
       ctx.rotate(Math.PI);
       ctx.drawImage(source,0,0);
-      const atlas=this.scanNet.render(rotated);
+      const panels=await this.panelCutout.registerPanels(rotated);
+      const atlas=this.uvAligner.render(rotated,panels);
       this.preparedSource=rotated;
       this.ready=atlas;
       this.showCanvas(atlas);
