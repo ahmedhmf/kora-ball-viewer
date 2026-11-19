@@ -161,12 +161,14 @@ export class TechpackPreparerComponent {
           corrected=await this.paper.straighten(input,corners);
         }
       }
-      // Keep an upright portrait sheet at its existing 0° orientation.
-      // Only attempt a whole-page rotation if an upload is landscape.
-      if (corrected.width >= corrected.height) {
-        const oriented=await this.paper.orientPrintedSheet(corrected);
-        corrected=oriented.canvas;
-      }
+      // Portrait paper can still be upside down. Always look for the
+      // KORA QR marker and orient the WHOLE page, before any registration
+      // or cropping. Rotating only landscape pages caused the 180° failure.
+      this.status.set('Orienting the A3 print using its QR marker...');
+      const oriented=await this.paper.orientPrintedSheet(corrected);
+      if (!oriented.reliable)
+        throw new Error('Cannot verify page orientation from the QR marker. Upload the original A3 scan with the QR visible; no panels have been cropped.');
+      corrected=oriented.canvas;
       const ratio=corrected.width/corrected.height;
       if (ratio < .62 || ratio > .79)
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
