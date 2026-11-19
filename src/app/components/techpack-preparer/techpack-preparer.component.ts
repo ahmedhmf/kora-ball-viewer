@@ -3,13 +3,11 @@ import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
 import { KoraPanelCutoutService } from '../../services/kora-panel-cutout.service';
-import { KoraUvAlignService } from '../../services/kora-uv-align.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
- * One-click local scan preparation: correct the page, orient its QR, register
- * the full paper's 32 printed outlines and paint the model's real UV islands.
- * There are no intermediate panel masks/crops and no destructive preview steps.
+ * One-click A3 preparation: straighten the page when needed and place its
+ * entire print into the OBJ square atlas. No panel is independently warped.
  */
 @Component({
   selector: 'app-techpack-preparer',
@@ -20,7 +18,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
       <header>
         <div>
           <h2>KORA BALL TEXTURE PREPARER</h2>
-          <p>Upload the original PDF or a full-page photo. Prepare all 32 panels for the 32-CLB ball in one click.</p>
+          <p>Upload the original A3 PDF or an upright full-page photograph. Prepare the entire print in one click.</p>
         </div>
         <a routerLink="/">Back to 3D Ball</a>
       </header>
@@ -35,7 +33,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Automatically straightens the page, orients the print, locates all 32 panels and builds one white 1024 × 1024 OBJ UV texture. The source picture is never cut or masked.</p>
+            <p class="helper">Converts the complete upright A3 sheet into a white 1:1 OBJ texture using one global transform. No panel cutting, masking or individual rotation.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -77,11 +75,11 @@ export class TechpackPreparerComponent {
   private readonly pdf = inject(PdfConverterService);
   private readonly paper = inject(PaperStraightenerService);
   private readonly panelCutout = inject(KoraPanelCutoutService);
-  private readonly uvAligner = inject(KoraUvAlignService);
   private readonly model = inject(ModelLoaderService);
   private readonly router = inject(Router);
 
   private original: HTMLCanvasElement | null = null;
+  private uploadedPdf = false;
   private ready: HTMLCanvasElement | null = null;
   readonly hasImage = signal(false);
   readonly prepared = signal(false);
@@ -99,10 +97,12 @@ export class TechpackPreparerComponent {
     this.hasImage.set(false);
     this.prepared.set(false);
     this.original = null;
+    this.uploadedPdf = false;
     this.ready = null;
     this.status.set('Reading original page...');
     try {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      this.uploadedPdf = isPdf;
       if (isPdf) {
         const pdfDocument = await this.pdf.loadPdfDocument(file);
         try {
@@ -149,32 +149,35 @@ export class TechpackPreparerComponent {
     this.prepared.set(false);
     this.ready = null;
     try {
-      this.status.set('Correcting paper perspective...');
-      const detected = this.paper.detect(this.original);
-      let corrected: HTMLCanvasElement;
-      if (detected.confidence === 'detected') {
-        const corners = this.paper.corners(this.original, detected.topRight, detected.bottomRight);
-        corrected = await this.paper.straighten(this.original, corners);
-      } else {
-        // A digitally exported PDF is already flat. Do not require a
-        // photographic tabletop/paper edge and do not guess a crop.
-        const ratio = this.original.width / this.original.height;
-        if (ratio < .62 || ratio > .79)
-          throw new Error('A portrait KORA page or a photo with a detectable paper edge is required.');
-        corrected = this.original;
+      this.status.set('Preparing the upright A3 page...');
+      const input=this.original;
+      let corrected=input;
+      // PDF exports are already geometrically flat; perspective detection on
+      // them can confuse an ink line with the edge of photographed paper.
+      if (!this.uploadedPdf) {
+        const detected=this.paper.detect(input);
+        if (detected.confidence === 'detected') {
+          const corners=this.paper.corners(input,detected.topRight,detected.bottomRight);
+          corrected=await this.paper.straighten(input,corners);
+        }
       }
-      this.status.set('Finding printed orientation...');
-      const oriented = await this.paper.orientPrintedSheet(corrected);
-      this.status.set('Registering all 32 printed panels (without cutting artwork)...');
-      const panels = await this.panelCutout.registerPanels(oriented.canvas);
-      this.status.set('Drawing the final 32-panel OBJ UV atlas...');
-      // Yield to render progress before CPU-bound texture sampling.
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
-      const atlas = this.uvAligner.render(oriented.canvas, panels);
+      // Keep an upright portrait sheet at its existing 0° orientation.
+      // Only attempt a whole-page rotation if an upload is landscape.
+      if (corrected.width >= corrected.height) {
+        const oriented=await this.paper.orientPrintedSheet(corrected);
+        corrected=oriented.canvas;
+      }
+      const ratio=corrected.width/corrected.height;
+      if (ratio < .62 || ratio > .79)
+        throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
+      this.status.set('Locating the full printed design on the A3 sheet...');
+      const panels=await this.panelCutout.registerPanels(corrected);
+      this.status.set('Building 1:1 texture from the whole page — no panel cuts...');
+      const atlas=this.panelCutout.placeFullSheetInBallUV(corrected,panels);
       this.ready = atlas;
       this.prepared.set(true);
       this.showCanvas(atlas);
-      this.status.set('Ready to download or apply to the 3D ball. All 32 panels mapped to 32-CLB.obj.');
+      this.status.set('Ready: whole A3 page scaled into the OBJ 1:1 texture without panel warping.');
     } catch (error) {
       this.prepared.set(false);
       this.ready = null;
