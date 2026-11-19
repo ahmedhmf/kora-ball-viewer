@@ -34,7 +34,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Straightens the A3 scan, registers all 32 printed panels and maps their artwork to the actual 32-CLB.obj UV islands. Creates a white 1024 × 1024 ball texture.</p>
+            <p class="helper">Straightens the A3 scan, registers all 32 panels, and transfers the complete uncut artwork to the actual 32-CLB.obj UV layout.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -211,16 +211,16 @@ export class TechpackPreparerComponent {
       }
       const panels=(useRotated ? second : first)?.panels;
       if(!panels)throw new Error('Cannot obtain the registered 32-panel template.');
-      this.status.set('Mapping all 32 printed panels into the OBJ UV islands...');
+      this.status.set('Mapping the complete A3 artwork continuously into the OBJ UV islands...');
       await new Promise<void>(resolve=>setTimeout(resolve,0));
-      const atlas=this.uvAligner.render(corrected,panels);
+      const atlas=this.uvAligner.renderContinuous(corrected,panels);
       this.preparedSource=corrected;
       this.ready = atlas;
       this.prepared.set(true);
       this.showCanvas(atlas);
       this.status.set(orientationUncertain
         ? 'UV texture prepared. QR orientation is uncertain: check the 3D ball and use Rotate entire design 180° if panels are upside down.'
-        : 'Ready: 32 registered print panels mapped into the OBJ UV texture.');
+        : 'Ready: complete 32-panel artwork preserved in the OBJ UV texture.');
     } catch (error) {
       this.prepared.set(false);
       this.ready = null;
@@ -256,7 +256,7 @@ export class TechpackPreparerComponent {
     try {
       const rotated=this.rotatePage180(this.preparedSource);
       const panels=await this.panelCutout.registerPanels(rotated);
-      const atlas=this.uvAligner.render(rotated,panels);
+      const atlas=this.uvAligner.renderContinuous(rotated,panels);
       this.preparedSource=rotated;
       this.ready=atlas;
       this.showCanvas(atlas);
