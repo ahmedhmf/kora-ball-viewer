@@ -34,9 +34,9 @@ const component = readFileSync('src/app/components/techpack-preparer/techpack-pr
 assert.ok(component.includes('PREPARE BALL TEXTURE'));
 assert.ok(component.includes('Download ready PNG'));
 assert.ok(component.includes('Apply to 3D Ball'));
-assert.ok(component.includes('this.panelCutout.registerPanels(corrected)'));
-assert.ok(component.includes('this.panelCutout.placeFullSheetInBallUV(corrected,panels)'));
-assert.ok(component.includes('const atlas=this.panelCutout.placeFullSheetInBallUV'));
+assert.ok(component.includes('this.scanNet.render(corrected)'));
+assert.ok(component.includes('this.scanNet.render(corrected)'));
+assert.ok(component.includes('const atlas=this.scanNet.render'));
 assert.ok(source.includes("if (mode === 'register') return source;"));
 assert.ok(source.includes('async registerPanels(source: HTMLCanvasElement)'));
 assert.ok(!component.includes('CUT TO PANEL SHAPES'));
@@ -49,6 +49,10 @@ assert.ok(!component.includes('if (corrected.width >= corrected.height)'));
 assert.ok(component.includes('const oriented=await this.paper.orientPrintedSheet(corrected)'));
 assert.ok(source.includes('placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][])'));
 assert.ok(source.includes('actx.drawImage(source,left,top,cropWidth,cropHeight,'));
+assert.ok(component.includes('KoraScanNetService'));
+assert.ok(!component.includes('KoraPanelCutoutService'));
+assert.ok(component.includes('const atlas=this.scanNet.render(corrected)'));
+assert.ok(component.includes('const atlas=this.scanNet.render(rotated)'));
 assert.ok(source.includes('const destX=(1024-destWidth)/2'));
 assert.ok(source.includes('const destY=(1024-destHeight)/2'));
 assert.ok(source.includes('const marginX=24*pxPerReferenceX'));
@@ -64,8 +68,8 @@ assert.ok(!component.includes("throw new Error('Cannot verify page orientation")
 assert.ok(component.includes('QR orientation was uncertain'));
 assert.ok(component.includes('async flipWholeSheet()'));
 assert.ok(component.includes('Rotate entire design 180°'));
-assert.ok(component.includes('this.panelCutout.registerPanels(rotated)'));
-assert.ok(component.includes('this.panelCutout.placeFullSheetInBallUV(rotated,panels)'));
+assert.ok(component.includes('this.scanNet.render(rotated)'));
+assert.ok(component.includes('this.scanNet.render(rotated)'));
 assert.ok(source.includes('const hull=lower.slice(0,-1).concat(upper.slice(0,-1))'));
 assert.ok(!source.slice(source.indexOf('placeFullSheetInBallUV('),source.indexOf('async cutToPanelShapes(')).includes('for(const polygon of registeredPanels)'));
 
