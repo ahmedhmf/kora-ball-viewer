@@ -14,6 +14,53 @@ export class KoraPanelCutoutService {
   private readonly referenceHeight = 1024;
   private readonly polygons: number[][][] = [[[353,63],[400,97],[382,152],[325,152],[307,97]],[[250,84],[306,96],[321,140],[285,195],[229,183],[211,130]],[[458,85],[496,131],[477,184],[422,195],[383,150],[402,96]],[[324,152],[388,159],[412,201],[382,251],[322,247],[296,200]],[[413,202],[468,214],[475,271],[423,295],[383,252]],[[295,202],[324,253],[284,295],[233,272],[238,217]],[[325,252],[382,252],[411,300],[382,352],[325,352],[298,307]],[[478,329],[521,367],[507,425],[454,442],[411,403],[424,346]],[[229,329],[285,348],[296,404],[254,442],[197,422],[186,368]],[[324,354],[382,353],[400,408],[353,442],[307,408]],[[590,365],[623,417],[601,465],[544,471],[512,417],[534,371]],[[117,366],[174,372],[194,416],[163,472],[106,466],[85,420]],[[455,442],[509,425],[539,465],[509,518],[454,500]],[[402,414],[454,443],[454,500],[405,529],[353,500],[353,443]],[[302,414],[353,443],[353,500],[303,530],[253,500],[253,443]],[[198,426],[253,444],[253,500],[200,519],[164,473]],[[163,472],[196,524],[173,572],[116,577],[87,519],[107,477]],[[544,471],[601,477],[623,525],[591,577],[535,572],[511,523]],[[353,502],[400,536],[382,590],[325,590],[308,541]],[[454,501],[509,519],[521,576],[478,614],[422,595],[411,540]],[[253,501],[296,539],[283,597],[229,614],[186,575],[199,519]],[[324,591],[388,598],[412,640],[382,690],[322,686],[296,639]],[[295,641],[324,691],[284,734],[232,709],[238,654]],[[412,641],[470,661],[475,710],[422,734],[383,691]],[[325,691],[382,691],[411,739],[382,791],[325,791],[298,746]],[[422,748],[477,760],[496,815],[458,858],[402,847],[385,800]],[[285,748],[321,803],[305,847],[250,859],[211,816],[230,760]],[[324,793],[382,792],[400,847],[350,879],[307,847]],[[404,853],[454,882],[454,940],[404,969],[354,940],[354,882]],[[302,853],[353,882],[353,940],[303,969],[253,940],[253,882]],[[201,865],[253,883],[253,939],[198,958],[164,911]],[[509,864],[543,912],[508,958],[454,939],[454,883]]];
 
+  /**
+   * Render a cutout into the 32-CLB OBJ's real UV atlas.
+   *
+   * Unlike centering a crop on a square, this maps its known PRINTED TEMPLATE
+   * bounds back to fixed UV coordinates. The constants were calibrated
+   * against the actual model's vt coordinates (0..1 texture space):
+   *   u = 0.105 + 0.00109 * templateX
+   *   topDownV = -0.065 + 0.00109 * templateY
+   * This is one GLOBAL scale/translation. All 32 panels keep their relative
+   * layout; the correction does not alter individual panels or scan colors.
+   *
+   * The cutToPanelShapes crop includes a five-reference-pixel margin on all
+   * four sides. Reconstructing the same bounds here prevents the crop from
+   * silently changing atlas coordinates.
+   */
+  placeCutoutInBallUV(cropped: HTMLCanvasElement): HTMLCanvasElement {
+    if(cropped.width<=0 || cropped.height<=0)
+      throw new Error('No panel cutout to place in ball UV atlas');
+    const allPoints=this.polygons.flat();
+    const xs=allPoints.map(([x])=>x),ys=allPoints.map(([,y])=>y);
+    const referenceMargin=5;
+    const left=Math.min(...xs)-referenceMargin;
+    const top=Math.min(...ys)-referenceMargin;
+    const right=Math.max(...xs)+referenceMargin;
+    const bottom=Math.max(...ys)+referenceMargin;
+
+    // These are UV coordinates in the default public/3d-models/32-CLB.obj.
+    const uvPixelsPerReferencePixel=1024*0.00109;
+    const atlasOffsetX=1024*0.105;
+    const atlasOffsetY=1024*(-0.065);
+    const x=atlasOffsetX+left*uvPixelsPerReferencePixel;
+    const y=atlasOffsetY+top*uvPixelsPerReferencePixel;
+    const width=(right-left)*uvPixelsPerReferencePixel;
+    const height=(bottom-top)*uvPixelsPerReferencePixel;
+
+    const atlas=document.createElement('canvas');
+    atlas.width=1024;
+    atlas.height=1024;
+    const ctx=atlas.getContext('2d');
+    if(!ctx)throw new Error('Cannot construct UV-aligned square texture');
+    // Solid white even where the cropped shape mask is transparent.
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(0,0,1024,1024);
+    ctx.drawImage(cropped,x,y,width,height);
+    return atlas;
+  }
+
   /** A transparent, trimmed polygon-only PNG uses the same verified alignment
    * as the existing white-background preview, but a tighter edge bleed. */
   async cutToPanelShapes(source: HTMLCanvasElement): Promise<HTMLCanvasElement> {

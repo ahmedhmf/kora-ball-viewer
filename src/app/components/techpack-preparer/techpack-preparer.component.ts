@@ -50,7 +50,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
                 (click)="toggleSquareMode()">
                 {{squareMode() ? 'SHOW ORIGINAL ASPECT RATIO' : 'MAKE 1:1'}}
               </button>
-              <p class="helper">Fit the complete panel cutout into a square without cropping or stretching. The final square has a solid white background, including between the panels.</p>
+              <p class="helper">Make a white 1:1 texture aligned to the KORA ball's UV coordinates. All 32 panels stay together, without cropping or individual panel warps.</p>
             }
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
@@ -62,7 +62,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
         </section>
         <section class="preview">
-          <h3>{{squareMode() ? 'Square 1:1 panel texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
+          <h3>{{squareMode() ? 'UV-aligned 1:1 ball texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
           <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
           <div class="ruler-layout">
             <div class="ruler-origin">0,0</div>
@@ -307,25 +307,12 @@ export class TechpackPreparerComponent {
   }
 
   /**
-   * Square padding is applied only after the tight panel-shape crop. Every
-   * original pixel remains at its original size and the panel arrangement is
-   * preserved. The transparent outside area is never filled with white.
+   * The final 1:1 result is not an arbitrary crop-and-center operation.
+   * It uses the KORA 32-CLB mesh's atlas registration to avoid shifting
+   * printed panel artwork away from the 3D ball's UV panel seams.
    */
   private makeSquareCanvas(source:HTMLCanvasElement):HTMLCanvasElement {
-    const size=Math.max(source.width,source.height);
-    const square=document.createElement('canvas');
-    square.width=size;
-    square.height=size;
-    const ctx=square.getContext('2d');
-    if(!ctx)throw new Error('Cannot create square panel texture');
-    // Composite the transparent panel cutout onto solid white padding.
-    // This keeps every original panel pixel while making the entire PNG opaque.
-    ctx.fillStyle='#ffffff';
-    ctx.fillRect(0,0,size,size);
-    const x=Math.floor((size-source.width)/2);
-    const y=Math.floor((size-source.height)/2);
-    ctx.drawImage(source,x,y);
-    return square;
+    return this.panelCutout.placeCutoutInBallUV(source);
   }
 
   toggleSquareMode():void {
@@ -340,7 +327,7 @@ export class TechpackPreparerComponent {
     this.squareVersion=this.makeSquareCanvas(this.shapesOnly);
     this.squareMode.set(true);
     this.showCanvas(this.squareVersion);
-    this.status.set('Created a 1:1 square PNG with solid white background. No panels were cropped or stretched.');
+    this.status.set('Created a UV-aligned 1:1 white texture for the KORA ball. No panel was independently moved.');
   }
 
   private finalCanvas():HTMLCanvasElement|null{
@@ -362,25 +349,17 @@ export class TechpackPreparerComponent {
     this.busy.set(true);
     this.status.set('Applying the entire corrected paper to the ball...');
     try{
-      // Existing viewer expects a square texture. This contains the entire
-      // straightened paper, fitted proportionally with white margins; no crops.
-      // Babylon expects a 1024px square texture. In 1:1 mode, use the full
-      // square without reintroducing white margins. Otherwise keep the
-      // original viewer mapping and transparency rules.
-      const square=this.pdf.convertPdfPageTo3DBallTexture(canvas);
-      if (this.shapesCut()) {
+      // The final 1:1 image is already 1024x1024 in the OBJ's UV atlas.
+      // Do NOT fit/pad it again: a second transform reintroduces the offset.
+      const square=this.squareMode()
+        ? canvas
+        : this.pdf.convertPdfPageTo3DBallTexture(canvas);
+      if(this.shapesCut() && !this.squareMode()){
+        // Preserve the older transparent cropped-preview behavior.
         const ctx=square.getContext('2d');
-        if (!ctx) throw new Error('Cannot create ball texture');
-        if (this.squareMode()) {
-          // White final texture includes white between the shaped panels.
-          ctx.fillStyle='#ffffff';
-          ctx.fillRect(0,0,square.width,square.height);
-        } else {
-          // Preserve transparent outside areas in the pre-square cutout mode.
-          ctx.clearRect(0,0,square.width,square.height);
-        }
-        const fit=this.squareMode() ? 1024 : 920;
-        const scale=Math.min(fit/canvas.width,fit/canvas.height);
+        if(!ctx)throw new Error('Cannot create ball texture');
+        ctx.clearRect(0,0,square.width,square.height);
+        const scale=Math.min(920/canvas.width,920/canvas.height);
         const width=canvas.width*scale,height=canvas.height*scale;
         ctx.drawImage(canvas,(1024-width)/2,(1024-height)/2,width,height);
       }

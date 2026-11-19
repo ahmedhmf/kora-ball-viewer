@@ -43,3 +43,29 @@ renders the square art into the Babylon viewer's required 1024×1024 texture.
 The X/Y ruler labels continue to track the actual currently displayed canvas.
 
 The earlier **Cut to Panel Shapes** mode still remains transparent; only **Make 1:1** composites the cutout onto solid white in both downloaded PNG and ball texture.
+
+## UV-aware final placement (misaligned 3D seams)
+
+The original **Cut to Panel Shapes** step saves a tightly cropped bitmap.
+Previously **Make 1:1** centered that bitmap on an arbitrary square. That is
+not the same as placing the artwork at the coordinates of the model's UVs.
+
+The final square now uses **one geometry-calibrated global transform** matched
+against `public/3d-models/32-CLB.obj`'s actual `vt` records. The printed
+725×1024 KORA panel coordinates are mapped to the default model's texture
+space with:
+
+- `u = 0.105 + 0.00109 * templateX`
+- `topDownV = -0.065 + 0.00109 * templateY`
+
+The exported image remains 1024×1024 with **solid white background** and the
+panels are *not* independently warped, recolored or rearranged. The
+`Make 1:1` preview itself shows the new UV placement. When applying that mode
+to the ball, the app uses those 1024 pixels directly, with **no second
+rescaling or 920px inset**. Prior stages and toggle behavior are unchanged.
+
+This registration is specifically for the default `32-CLB.obj` model;
+custom OBJ models may have a different UV atlas. Because the printed scan's
+panel geometry and model UV atlas are not perfectly identical, this global
+fit reduces systematic offset but does **not** guarantee every individual
+seam will match perfectly.
