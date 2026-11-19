@@ -39,6 +39,15 @@ assert.ok(prepareStart>=0 && registerAt>prepareStart && renderAt>registerAt && r
   'The one-click flow must register the original corrected image before rendering its OBJ UV islands');
 assert.ok(flipStart>=0 && rotateRegisterAt>flipStart && rotateRenderAt>rotateRegisterAt,
   '180° correction must re-register the rotated original before UV mapping');
+assert.ok(source.includes('getRegistrationScore(source: HTMLCanvasElement)'),
+  'Expose geometric registration quality to compare A3 orientations');
+assert.ok(component.includes('const rotated=this.rotatePage180(corrected)'));
+assert.ok(component.includes('this.panelCutout.getRegistrationScore(corrected)'));
+assert.ok(component.includes('this.panelCutout.getRegistrationScore(rotated)'));
+assert.ok(component.includes('second.score + minimumImprovement < first.score'),
+  'Select whole-page rotation from fit evidence instead of guessing from the QR');
+assert.ok(component.includes('const panels=(useRotated ? second : first)?.panels'),
+  'Render the polygons belonging to the chosen source orientation');
 assert.ok(!component.includes('this.scanNet.render('),
   'The centered thumbnail is not an OBJ UV texture');
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
