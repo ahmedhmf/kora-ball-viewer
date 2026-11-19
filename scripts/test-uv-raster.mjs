@@ -56,6 +56,19 @@ const js=ts.transpileModule(serviceCode,{compilerOptions:{
 runInNewContext(js,context);
 const aligner=new context.exports.KoraUvAlignService();
 const source={width,height,getContext:()=>({getImageData:()=>({data:pixels})})};
+// Polygon edges must interpolate to their matching print edges; the new
+// smooth warp must not introduce a pivot or rotate an individual panel.
+for (let panel=0; panel<32; panel++) {
+  const from=printed[panel],to=uv[panel];
+  for (let i=0; i<to.length; i++) {
+    const j=(i+1)%to.length;
+    const mid=[(to[i][0]+to[j][0])/2,(to[i][1]+to[j][1])/2];
+    const mapped=aligner.mapPoint(mid[0],mid[1],from,to);
+    const expected=[(from[i][0]+from[j][0])/2,(from[i][1]+from[j][1])/2];
+    assert.ok(Math.hypot(mapped[0]-expected[0],mapped[1]-expected[1])<.01,
+      'Mapped panel '+(panel+1)+' edge '+i+' must preserve UV corner correspondence');
+  }
+}
 const result=aligner.render(source,printed);
 assert.equal(result.width,1024);
 assert.equal(result.height,1024);
@@ -80,4 +93,4 @@ assert.throws(()=>aligner.render(source,reversed),/Degenerate or mirrored panel 
 const wrong=printed.map(p=>p.map(v=>v.slice()));
 wrong[1][0][0]=NaN;
 assert.throws(()=>aligner.render(source,wrong),/Non-finite panel corner on panel 2/);
-console.log('Raster verified: 32 uniquely colored OBJ UV islands, white opaque gutters, input validation.');
+console.log('Raster verified: 32 uniquely colored OBJ UV islands, exact polygon edge mapping, opaque white gutters and input validation.');
