@@ -1,5 +1,4 @@
 import { Injectable } from '@angular/core';
-import { refineKoraPanelCorners } from './kora-panel-edge-refiner';
 
 /**
  * Optional, reversible removal of marks outside the printed KORA panels.
@@ -200,16 +199,12 @@ export class KoraPanelCutoutService {
     // UV rendering samples the full original corrected page, not the cropped
     // and re-centered 1:1 result.
     const factorX=source.width/width,factorY=source.height/height;
-    const globallyAligned = this.polygons.map(polygon=>polygon.map(([x,y])=>[
-      x*best[2]+best[0], y*best[3]+best[1]
-    ]));
-    // Run the local border finder ONLY for the new one-click registration
-    // path. The original optional cut/white masks are left unchanged.
-    const aligned = mode === 'register'
-      ? refineKoraPanelCorners(gray, width, height, globallyAligned)
-      : globallyAligned;
-    this.registered={source,panels:aligned.map(polygon=>polygon.map(([x,y])=>[
-      x*factorX, y*factorY
+    // The fixed print reference has one consistent clockwise winding.
+    // Do not move its individual edges based on handwriting or faint marks:
+    // local edge snapping caused visible clipped and distorted panels.
+    this.registered={source,panels:this.polygons.map(polygon=>polygon.map(([x,y])=>[
+      (x*best[2]+best[0])*factorX,
+      (y*best[3]+best[1])*factorY
     ]))};
 
 
