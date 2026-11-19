@@ -159,7 +159,9 @@ export class PaperStraightenerService {
     }
 
     if (!reliable) {
-      const w = 256;
+      // QR modules are tiny in A3 scans; 256px erased their structure.
+      // Probe at 512px so corner-pattern density remains measurable.
+      const w = 512;
       const h = Math.max(128, Math.round(w * source.height / source.width));
       const probe = document.createElement('canvas');
       probe.width = w; probe.height = h;
@@ -190,7 +192,7 @@ export class PaperStraightenerService {
         .sort((a,b)=>b.score-a.score);
       // Don't rotate on a small or ambiguous signal; any red scribbles on a
       // corner can also create high-frequency features.
-      if (ranking[0].score >= 75 && ranking[0].score >= 1.8 * Math.max(1,ranking[1].score)) {
+      if (ranking[0].score >= 65 && ranking[0].score >= 1.6 * Math.max(1,ranking[1].score)) {
         angle = rotateForCorner(ranking[0].corner);
         reliable = true;
       }
