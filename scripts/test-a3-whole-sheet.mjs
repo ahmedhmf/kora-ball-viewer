@@ -25,6 +25,16 @@ const sandbox={
     const ops=[];
     const canvas={width:0,height:0,ops,getContext:()=>({
       set fillStyle(value){ops.push(['fillStyle',value]);},
+      set strokeStyle(value){ops.push(['strokeStyle',value]);},
+      set lineJoin(value){ops.push(['lineJoin',value]);},
+      set lineCap(value){ops.push(['lineCap',value]);},
+      set lineWidth(value){ops.push(['lineWidth',value]);},
+      beginPath:()=>ops.push(['beginPath']),
+      moveTo:(...args)=>ops.push(['moveTo',...args]),
+      lineTo:(...args)=>ops.push(['lineTo',...args]),
+      closePath:()=>ops.push(['closePath']),
+      fill:()=>ops.push(['fill']),
+      stroke:()=>ops.push(['stroke']),
       fillRect:(...args)=>ops.push(['fillRect',...args]),
       drawImage:(...args)=>ops.push(['drawImage',...args]),
       set globalCompositeOperation(value){ops.push(['composite',value]);}
