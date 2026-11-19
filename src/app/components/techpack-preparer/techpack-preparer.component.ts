@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject, signal, computed } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
@@ -7,426 +7,223 @@ import { KoraUvAlignService } from '../../services/kora-uv-align.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
- * Prepare whole scanned sheets without altering any panel, drawing or label.
- * The only geometric operations are paper perspective correction and user
- * selected whole-image rotation. Everything remains local to the browser.
+ * One-click local scan preparation: correct the page, orient its QR, register
+ * the full paper's 32 printed outlines and paint the model's real UV islands.
+ * There are no intermediate panel masks/crops and no destructive preview steps.
  */
 @Component({
-  selector:'app-techpack-preparer',
-  standalone:true,
-  imports:[RouterLink],
-  template:`
+  selector: 'app-techpack-preparer',
+  standalone: true,
+  imports: [RouterLink],
+  template: `
     <main class="orienter">
       <header>
         <div>
-          <h2>STRAIGHTEN KORA PAPER</h2>
-          <p>Upload your PDF or photo. The paper is detected and straightened automatically without altering its artwork.</p>
+          <h2>KORA BALL TEXTURE PREPARER</h2>
+          <p>Upload the original PDF or a full-page photo. Prepare all 32 panels for the 32-CLB ball in one click.</p>
         </div>
         <a routerLink="/">Back to 3D Ball</a>
       </header>
       <div class="workspace">
         <section class="controls">
-          <label>Upload scanned PDF or photo
+          <label>PDF or photo
             <input type="file" accept=".pdf,application/pdf,image/png,image/jpeg,image/webp"
               [disabled]="busy()" (change)="loadFile($event)" />
           </label>
-          <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (hasImage()) {
             <p class="file">{{fileName()}}</p>
-            <p class="helper">Paper detected and straightened automatically. All artwork, labels and margins on the sheet are preserved.</p>
-            <button type="button" class="cutout" [disabled]="busy() || !hasPaper()"
-              (click)="toggleOutsidePanels()">
-              {{outsideRemoved() ? 'SHOW FULL PAPER' : 'REMOVE OUTSIDE PANELS'}}
+            <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
+              {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Optional preview: removes markings around the 32 panels without changing the original straightened page. You can switch back at any time.</p>
-            @if (outsideRemoved()) {
-              <button type="button" class="cut-shapes" [disabled]="busy() || !hasPaper()"
-                (click)="toggleCutPanelShapes()">
-                {{shapesCut() ? 'SHOW UNCROPPED PANELS' : 'CUT TO PANEL SHAPES'}}
-              </button>
-              <p class="helper">Cut mode keeps only the panel-shaped artwork, removes the empty margins and uses transparency outside the shapes. This is a preview until you choose to download or apply it.</p>
-            }
-            @if (shapesCut()) {
-              <button type="button" class="square" [disabled]="busy() || !hasPaper()"
-                (click)="toggleSquareMode()">
-                {{squareMode() ? 'SHOW ORIGINAL ASPECT RATIO' : 'MAKE 1:1'}}
-              </button>
-              <p class="helper">Make a white 1:1 texture aligned to the KORA ball's UV coordinates. All 32 panels stay together, without cropping or individual panel warps.</p>
-            }
-            @if (squareMode()) {
-              <button type="button" class="uv" [disabled]="busy() || !hasPaper()"
-                (click)="toggleUvAlignment()">
-                {{uvAligned() ? 'SHOW ORIGINAL 1:1 IMAGE' : 'ALIGN PANELS TO 3D BALL'}}
-              </button>
-              <p class="helper">Optional: precisely map each printed panel onto its matching 3D-model UV island. Compare against the original square output.</p>
-            }
-            <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
-              (click)="applyToBall()">
-              {{busy() ? 'PROCESSING...' : 'APPLY STRAIGHTENED PAPER TO BALL'}}
-            </button>
-            <button type="button" [disabled]="busy() || !hasPaper()" (click)="download()">
-              Download corrected PNG
-            </button>
+            <p class="helper">Automatically straightens the page, orients the print, locates all 32 panels and builds one white 1024 × 1024 OBJ UV texture. The source picture is never cut or masked.</p>
+          }
+          <p class="status" role="status" aria-live="polite">{{status()}}</p>
+          @if (prepared()) {
+            <button type="button" [disabled]="busy()" (click)="download()">Download ready PNG</button>
+            <button type="button" [disabled]="busy()" (click)="applyToBall()">Apply to 3D Ball</button>
           }
         </section>
         <section class="preview">
-          <h3>{{uvAligned() ? '32-panel exact OBJ UV atlas' : squareMode() ? 'UV-aligned 1:1 ball texture' : shapesCut() ? 'Cropped panel shapes' : outsideRemoved() ? 'Panel-only preview' : 'Automatically straightened paper'}}</h3>
-          <p class="coordinate-help">X and Y are pixel coordinates of the corrected page. Rulers are preview-only.</p>
-          <div class="ruler-layout">
-            <div class="ruler-origin">0,0</div>
-            <div class="ruler-x">
-              @for (tick of xTicks(); track tick) {
-                <div class="x-tick" [style.left.%]="tick * 100 / pageWidth()">
-                  <span>{{tick}}</span>
-                </div>
-              }
-              <span class="axis-name">X (px)</span>
-            </div>
-            <div class="ruler-y">
-              @for (tick of yTicks(); track tick) {
-                <div class="y-tick" [style.top.%]="tick * 100 / pageHeight()">
-                  <span>{{tick}}</span>
-                </div>
-              }
-              <span class="axis-name-y">Y (px)</span>
-            </div>
-            <canvas #previewCanvas aria-label="Entire paper with perspective corrected, X/Y rulers outside the image"></canvas>
-          </div>
+          <h3>{{prepared() ? 'Ready: 32-panel 1024 × 1024 ball texture' : 'Original scan'}}</h3>
+          <canvas #previewCanvas aria-label="Preview of the original scan or final OBJ-aligned ball texture"></canvas>
         </section>
       </div>
     </main>
   `,
-  styles:[`
+  styles: [`
     .orienter{min-height:100vh;background:#0d0f12;color:#e5e7eb;padding:20px;box-sizing:border-box}
     header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
-    h2{font-size:17px;color:#ef4444;margin:0 0 6px}
-    h3{font-size:13px;margin:0 0 8px}
+    h2{font-size:18px;color:#ef4444;margin:0 0 6px}
+    h3{font-size:14px;margin:0 0 12px}
     p{font-size:12px;color:#aeb4bd;line-height:1.5}
     a{color:#fca5a5}
     .workspace{display:grid;grid-template-columns:310px minmax(0,1fr);gap:16px}
     .controls,.preview{padding:16px;background:#10151c;border:1px solid #353b44;border-radius:8px}
     label{display:block;font-size:13px;font-weight:600;margin-bottom:16px}
-    input[type=file],input[type=range],select{display:block;width:100%;margin-top:8px;box-sizing:border-box}
-    input[type=file]{font-size:12px}
-    select{padding:8px;color:#fff;background:#202730;border:1px solid #555}
-    button{border:1px solid #555;background:#303744;color:white;padding:9px;cursor:pointer;border-radius:5px}
+    input[type=file]{display:block;width:100%;margin-top:8px;font-size:12px}
+    button{display:block;width:100%;border:1px solid #555;background:#303744;color:white;padding:11px;cursor:pointer;border-radius:5px;margin:10px 0}
     button:disabled{opacity:.5;cursor:not-allowed}
-
-    .uv{display:block;width:100%;background:#74532a;border-color:#d7a75e;margin:6px 0 10px;font-weight:700}
-    .square{display:block;width:100%;background:#613d91;border-color:#a786d9;margin:6px 0 10px;font-weight:700}
-    .cut-shapes{display:block;width:100%;background:#314a77;border-color:#7898e0;margin:6px 0 10px;font-weight:700}
-    .cutout{display:block;width:100%;background:#13584c;border-color:#1c9d80;margin:6px 0 10px;font-weight:700}
-    .apply{width:100%;background:#b91c1c;border-color:#b91c1c;margin-bottom:10px;font-weight:700}
-    .controls>button:not(.apply){width:100%}
+    .prepare{background:#b91c1c;border-color:#b91c1c;font-weight:700}
     .status{color:#e5e7eb;font-weight:600;overflow-wrap:anywhere}
     .file{overflow-wrap:anywhere}.helper{color:#fcd34d}
-    .preview{display:flex;flex-direction:column;min-height:360px;min-width:0;overflow:auto;max-height:87vh}
+    .preview{display:flex;flex-direction:column;align-items:center;min-width:0;max-height:87vh;overflow:auto}
     .preview h3{align-self:flex-start}
-    .coordinate-help{margin:0 0 12px}
-    .ruler-layout{display:grid;grid-template-columns:48px minmax(0,1fr);
-      grid-template-rows:30px auto;align-items:stretch;width:100%;max-width:820px;margin:0 auto}
-    .ruler-origin{background:#28313d;color:#e5e7eb;text-align:center;
-      line-height:30px;font-size:11px;border-right:1px solid #636d7a;border-bottom:1px solid #636d7a}
-    .ruler-x,.ruler-y{background:#202a35;position:relative;color:#d2d7df;overflow:hidden}
-    .ruler-x{border-bottom:1px solid #718096}
-    .ruler-y{border-right:1px solid #718096}
-    .x-tick{position:absolute;bottom:0;height:11px;border-left:1px solid #a5b4c7}
-    .x-tick span{position:absolute;bottom:12px;left:3px;font-size:10px;white-space:nowrap}
-    .y-tick{position:absolute;right:0;width:11px;border-top:1px solid #a5b4c7}
-    .y-tick span{position:absolute;right:14px;top:-7px;font-size:10px;white-space:nowrap}
-    .axis-name{position:absolute;right:5px;top:3px;font-size:10px;color:#91a1b4}
-    .axis-name-y{position:absolute;left:4px;bottom:5px;font-size:10px;color:#91a1b4}
-    .preview canvas{display:block;width:100%;height:auto;max-width:none;max-height:none;
-      background-color:#fff;background-image:linear-gradient(45deg,#e9edf2 25%,transparent 25%),
-      linear-gradient(-45deg,#e9edf2 25%,transparent 25%),
-      linear-gradient(45deg,transparent 75%,#e9edf2 75%),
-      linear-gradient(-45deg,transparent 75%,#e9edf2 75%);
-      background-position:0 0,0 10px,10px -10px,-10px 0;background-size:20px 20px}
+    .preview canvas{display:block;max-width:100%;height:auto;background:#fff}
     @media(max-width:800px){.workspace{grid-template-columns:1fr}}
   `]
 })
 export class TechpackPreparerComponent {
-  @ViewChild('previewCanvas',{static:true}) private previewRef!:ElementRef<HTMLCanvasElement>;
-  private readonly pdf=inject(PdfConverterService);
-  private readonly paper=inject(PaperStraightenerService);
-  private readonly panelCutout=inject(KoraPanelCutoutService);
-  private readonly uvAligner=inject(KoraUvAlignService);
-  private readonly model=inject(ModelLoaderService);
-  private readonly router=inject(Router);
-  private original:HTMLCanvasElement|null=null;
-  private straightened:HTMLCanvasElement|null=null;
-  private panelOnly:HTMLCanvasElement|null=null;
-  private shapesOnly:HTMLCanvasElement|null=null;
-  private squareVersion:HTMLCanvasElement|null=null;
-  private uvVersion:HTMLCanvasElement|null=null;
-  readonly uvAligned=signal(false);
-  readonly squareMode=signal(false);
-  readonly outsideRemoved=signal(false);
-  readonly shapesCut=signal(false);
-  readonly hasImage=signal(false);
-  readonly hasPaper=signal(false);
-  readonly busy=signal(false);
-  readonly status=signal('Upload the PDF or photo containing the photographed paper.');
-  readonly fileName=signal('');
-  readonly pageWidth=signal(1);
-  readonly pageHeight=signal(1);
-  readonly xTicks=computed(()=>this.makeTicks(this.pageWidth()));
-  readonly yTicks=computed(()=>this.makeTicks(this.pageHeight()));
+  @ViewChild('previewCanvas', { static: true }) private previewRef!: ElementRef<HTMLCanvasElement>;
+  private readonly pdf = inject(PdfConverterService);
+  private readonly paper = inject(PaperStraightenerService);
+  private readonly panelCutout = inject(KoraPanelCutoutService);
+  private readonly uvAligner = inject(KoraUvAlignService);
+  private readonly model = inject(ModelLoaderService);
+  private readonly router = inject(Router);
 
-  async loadFile(event:Event):Promise<void>{
-    const input=event.target as HTMLInputElement;
-    const file=input.files?.[0];
-    input.value='';
-    if(!file||this.busy())return;
+  private original: HTMLCanvasElement | null = null;
+  private ready: HTMLCanvasElement | null = null;
+  readonly hasImage = signal(false);
+  readonly prepared = signal(false);
+  readonly busy = signal(false);
+  readonly fileName = signal('');
+  readonly status = signal('Upload an original KORA print or photo to begin.');
+
+  async loadFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || this.busy()) return;
+
     this.busy.set(true);
     this.hasImage.set(false);
-    this.hasPaper.set(false);
-    this.original=null;this.straightened=null;this.panelOnly=null;this.shapesOnly=null;
-    this.squareVersion=null;
-    this.uvVersion=null;
-    this.uvAligned.set(false);
-    this.squareMode.set(false);
-    this.outsideRemoved.set(false);
-    this.shapesCut.set(false);
-    this.pageWidth.set(1);this.pageHeight.set(1);
-    this.status.set('Reading scanned page...');
-    try{
-      const isPdf=file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf');
-      if(isPdf){
-        const document=await this.pdf.loadPdfDocument(file);
-        try{
-          const page=await document.getPage(1);
-          const viewport=page.getViewport({scale:1});
-          const renderScale=Math.min(2.4,2400/Math.max(viewport.width,viewport.height));
-          const result=await this.pdf.renderPageToCanvas(document,1,renderScale);
-          this.original=result.canvas;
-        }finally{await document.destroy();}
-      }else if(file.type.startsWith('image/')){
-        const bitmap=await createImageBitmap(file);
-        try{
-          const canvas=document.createElement('canvas');
-          canvas.width=bitmap.width;canvas.height=bitmap.height;
-          canvas.getContext('2d')!.drawImage(bitmap,0,0);
-          this.original=canvas;
-        }finally{bitmap.close();}
-      }else throw new Error('Please select a PDF, JPG, PNG or WEBP.');
+    this.prepared.set(false);
+    this.original = null;
+    this.ready = null;
+    this.status.set('Reading original page...');
+    try {
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      if (isPdf) {
+        const pdfDocument = await this.pdf.loadPdfDocument(file);
+        try {
+          const page = await pdfDocument.getPage(1);
+          const viewport = page.getViewport({scale:1});
+          const scale = Math.min(2.4, 2400 / Math.max(viewport.width, viewport.height));
+          const rendered = await this.pdf.renderPageToCanvas(pdfDocument, 1, scale);
+          this.original = rendered.canvas;
+        } finally {
+          await pdfDocument.destroy();
+        }
+      } else if (file.type.startsWith('image/')) {
+        const bitmap = await createImageBitmap(file);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Cannot read uploaded image.');
+          ctx.drawImage(bitmap, 0, 0);
+          this.original = canvas;
+        } finally {
+          bitmap.close();
+        }
+      } else {
+        throw new Error('Please select a PDF, JPG, PNG or WEBP.');
+      }
       this.fileName.set(file.name);
       this.hasImage.set(true);
-      await this.straightenAutomatically();
-    }catch(error){
-      this.status.set('Could not process paper: '+String(error));
-      console.error('[KORA paper]',error);
-    }finally{this.busy.set(false);}
-  }
-
-  /** One upload → paper detection → one continuous perspective warp → preview.
-   * No alignment controls or separate confirmation step required. */
-  private makeTicks(length:number):number[]{
-    if(length<=1)return [];
-    // Keep the axis readable on small screens: labels every ~15% of the page.
-    const interval=Math.max(50,Math.ceil(length/6/50)*50);
-    const ticks:number[]=[];
-    for(let n=0;n<length;n+=interval)ticks.push(n);
-    return ticks;
-  }
-
-  private async straightenAutomatically():Promise<void>{
-    if(!this.original)return;
-    this.status.set('Finding the paper border and straightening its perspective...');
-    const guess=this.paper.detect(this.original);
-    if(guess.confidence!=='detected'){
-      this.hasPaper.set(false);
-      throw new Error(guess.note);
+      this.showCanvas(this.original);
+      this.status.set('Scan loaded. Press Prepare Ball Texture to create the final 3D ball image.');
+    } catch (error) {
+      this.status.set('Could not load page: ' + String(error));
+      console.error('[KORA upload]', error);
+    } finally {
+      this.busy.set(false);
     }
-    const quad=this.paper.corners(this.original,guess.topRight,guess.bottomRight);
-    const corrected=await this.paper.straighten(this.original,quad);
-    this.status.set('Paper straightened. Checking QR marker for page orientation...');
-    const orientation=await this.paper.orientPrintedSheet(corrected);
-    this.straightened=orientation.canvas;
-    this.panelOnly=null;
-    this.shapesOnly=null;
-    this.squareVersion=null;
-    this.uvVersion=null;
-    this.uvAligned.set(false);
-    this.squareMode.set(false);
-    this.outsideRemoved.set(false);
-    this.shapesCut.set(false);
-    this.showCanvas(this.straightened);
-    this.hasPaper.set(true);
-    this.status.set(orientation.reliable
-      ? 'Paper straightened and rotated '+orientation.angle+'° automatically. The printed QR is at bottom-left.'
-      : 'Paper straightened; printed orientation was uncertain, so no rotation was guessed.');
+  }
+
+  /** Runs all preparation internally, but never uses intermediate masked images. */
+  async prepareBallTexture(): Promise<void> {
+    if (!this.original || this.busy()) return;
+    this.busy.set(true);
+    this.prepared.set(false);
+    this.ready = null;
+    try {
+      this.status.set('Correcting paper perspective...');
+      const detected = this.paper.detect(this.original);
+      let corrected: HTMLCanvasElement;
+      if (detected.confidence === 'detected') {
+        const corners = this.paper.corners(this.original, detected.topRight, detected.bottomRight);
+        corrected = await this.paper.straighten(this.original, corners);
+      } else {
+        // A digitally exported PDF is already flat. Do not require a
+        // photographic tabletop/paper edge and do not guess a crop.
+        const ratio = this.original.width / this.original.height;
+        if (ratio < .62 || ratio > .79)
+          throw new Error('A portrait KORA page or a photo with a detectable paper edge is required.');
+        corrected = this.original;
+      }
+      this.status.set('Finding printed orientation...');
+      const oriented = await this.paper.orientPrintedSheet(corrected);
+      this.status.set('Registering all 32 printed panels (without cutting artwork)...');
+      const panels = await this.panelCutout.registerPanels(oriented.canvas);
+      this.status.set('Drawing the final 32-panel OBJ UV atlas...');
+      // Yield to render progress before CPU-bound texture sampling.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      const atlas = this.uvAligner.render(oriented.canvas, panels);
+      this.ready = atlas;
+      this.prepared.set(true);
+      this.showCanvas(atlas);
+      this.status.set('Ready to download or apply to the 3D ball. All 32 panels mapped to 32-CLB.obj.');
+    } catch (error) {
+      this.prepared.set(false);
+      this.ready = null;
+      this.showCanvas(this.original);
+      this.status.set('Preparation failed: ' + String(error));
+      console.error('[KORA one-click UV preparation]', error);
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   private showCanvas(source: HTMLCanvasElement): void {
-    const preview=this.previewRef.nativeElement;
-    preview.width=source.width;
-    preview.height=source.height;
-    this.pageWidth.set(source.width);
-    this.pageHeight.set(source.height);
-    preview.getContext('2d')!.drawImage(source,0,0);
+    const preview = this.previewRef.nativeElement;
+    preview.width = source.width;
+    preview.height = source.height;
+    const ctx = preview.getContext('2d');
+    if (!ctx) throw new Error('Cannot preview prepared texture');
+    ctx.drawImage(source, 0, 0);
   }
 
-  /** Button-only, reversible cleanup. Original corrected page is untouched. */
-  async toggleOutsidePanels(): Promise<void> {
-    if (!this.straightened || this.busy()) return;
-    if (this.outsideRemoved()) {
-      this.uvAligned.set(false);
-      this.uvVersion=null;
-      this.uvAligned.set(false);
-      this.uvVersion=null;
-      this.squareMode.set(false);
-      this.squareVersion=null;
-      this.shapesCut.set(false);
-      this.outsideRemoved.set(false);
-      this.showCanvas(this.straightened);
-      this.status.set('Showing the full straightened paper again. No data was lost.');
-      return;
-    }
-    this.busy.set(true);
-    this.status.set('Finding KORA panels and clearing marks outside them...');
+  async download(): Promise<void> {
+    if (!this.ready || !this.prepared() || this.busy()) return;
     try {
-      this.panelOnly ??= await this.panelCutout.removeOutside(this.straightened);
-      this.outsideRemoved.set(true);
-      this.shapesCut.set(false);
-      this.squareMode.set(false);
-      this.squareVersion=null;
-      this.showCanvas(this.panelOnly);
-      this.status.set('Outside-panel marks hidden. Review the panel edges; click Show Full Paper to undo.');
+      const file = await this.pdf.canvasToFile(this.ready, 'kora-ready-ball-1024.png', 'image/png');
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
-      this.status.set('Outside-panel cleanup failed: '+String(error));
-      console.error('[KORA panel cutout]',error);
-    } finally { this.busy.set(false); }
+      this.status.set('Download failed: ' + String(error));
+    }
   }
 
-  /** Third, optional step: tightly trim all 32 panel shapes while preserving
-   * their original positions relative to one another and transparency. */
-  async toggleCutPanelShapes(): Promise<void> {
-    if (!this.straightened || !this.outsideRemoved() || this.busy()) return;
-    if (this.shapesCut()) {
-      this.uvAligned.set(false);
-      this.uvVersion=null;
-      this.squareMode.set(false);
-      this.squareVersion=null;
-      this.shapesCut.set(false);
-      if (this.panelOnly) this.showCanvas(this.panelOnly);
-      this.status.set('Back to the full-size panel-only preview.');
-      return;
-    }
+  async applyToBall(): Promise<void> {
+    if (!this.ready || !this.prepared() || this.busy()) return;
     this.busy.set(true);
-    this.status.set('Trimming surrounding margins to the 32 panel shapes...');
     try {
-      this.shapesOnly ??= await this.panelCutout.cutToPanelShapes(this.straightened);
-      this.uvAligned.set(false);
-      this.uvVersion=null;
-      this.squareMode.set(false);
-      this.squareVersion=null;
-      this.shapesCut.set(true);
-      this.showCanvas(this.shapesOnly);
-      this.status.set('Panel shapes cropped. Areas outside the outlines are transparent; click Show Uncropped Panels to go back.');
-    } catch (error) {
-      this.status.set('Could not cut panel shapes: '+String(error));
-      console.error('[KORA panel shape crop]',error);
-    } finally { this.busy.set(false); }
-  }
-
-  /**
-   * The final 1:1 result is not an arbitrary crop-and-center operation.
-   * It uses the KORA 32-CLB mesh's atlas registration to avoid shifting
-   * printed panel artwork away from the 3D ball's UV panel seams.
-   */
-  private makeSquareCanvas(source:HTMLCanvasElement):HTMLCanvasElement {
-    return this.panelCutout.placeCutoutInBallUV(source);
-  }
-
-  toggleSquareMode():void {
-    if(this.busy() || !this.hasPaper() || !this.shapesCut() || !this.shapesOnly)return;
-    if(this.squareMode()){
-      this.uvAligned.set(false);
-      this.uvVersion=null;
-      this.squareMode.set(false);
-      this.squareVersion=null;
-      this.showCanvas(this.shapesOnly);
-      this.status.set('Returned to the original cropped aspect ratio.');
-      return;
-    }
-    this.uvAligned.set(false);
-    this.uvVersion=null;
-    this.squareVersion=this.makeSquareCanvas(this.shapesOnly);
-    this.squareMode.set(true);
-    this.showCanvas(this.squareVersion);
-    this.status.set('Created a UV-aligned 1:1 white texture for the KORA ball. No panel was independently moved.');
-  }
-
-  /** Optional final mapping: samples the original corrected sheet into the
-   * ACTUAL OBJ UV island polygons instead of globally positioning the net. */
-  async toggleUvAlignment():Promise<void>{
-    if(this.busy() || !this.squareMode() || !this.straightened || !this.squareVersion)return;
-    if(this.uvAligned()){
-      this.uvAligned.set(false);
-      this.showCanvas(this.squareVersion);
-      this.status.set('Restored the original 1:1 square result.');
-      return;
-    }
-    this.busy.set(true);
-    this.status.set('Aligning each of the 32 paper panels with the OBJ UV layout...');
-    try {
-      // Registration is inherited from the previous Cut to Panel Shapes
-      // step, but the source pixels come from the full upright sheet.
-      const panels=this.panelCutout.getRegisteredPanels(this.straightened);
-      await new Promise<void>(resolve=>setTimeout(resolve,0));
-      this.uvVersion??=this.uvAligner.render(this.straightened,panels);
-      this.uvAligned.set(true);
-      this.showCanvas(this.uvVersion);
-      this.status.set('Mapped all 32 panels to model UVs. Check ball seams; use Show Original 1:1 Image to compare.');
-    } catch(error){
-      this.status.set('Could not align UV panels: '+String(error));
-      console.error('[KORA UV map]',error);
-    } finally {this.busy.set(false);}
-  }
-
-  private finalCanvas():HTMLCanvasElement|null{
-    return this.hasPaper()?this.previewRef.nativeElement:null;
-  }
-  async download():Promise<void>{
-    const canvas=this.finalCanvas();if(!canvas)return;
-    try{
-      const file=await this.pdf.canvasToFile(canvas,
-        this.uvAligned() ? 'kora-uv-aligned-ball-1024.png' :
-        this.squareMode() ? 'kora-panel-shapes-square.png' :
-        this.shapesCut() ? 'kora-panel-shapes-transparent.png' : 'kora-paper-straightened.png','image/png');
-      const url=URL.createObjectURL(file),link=document.createElement('a');
-      link.href=url;link.download=file.name;link.click();
-      window.setTimeout(()=>URL.revokeObjectURL(url),1000);
-    }catch(error){this.status.set('Download failed: '+String(error));}
-  }
-  async applyToBall():Promise<void>{
-    const canvas=this.finalCanvas();if(!canvas||this.busy())return;
-    this.busy.set(true);
-    this.status.set('Applying the entire corrected paper to the ball...');
-    try{
-      // The final 1:1 image is already 1024x1024 in the OBJ's UV atlas.
-      // Do NOT fit/pad it again: a second transform reintroduces the offset.
-      // Both final 1:1 modes already render the intended OBJ atlas at 1024².
-      // Never resize/recenter them again at the ball texture stage.
-      const square=this.squareMode()
-        ? canvas
-        : this.pdf.convertPdfPageTo3DBallTexture(canvas);
-      if(this.shapesCut() && !this.squareMode()){
-        // Preserve the older transparent cropped-preview behavior.
-        const ctx=square.getContext('2d');
-        if(!ctx)throw new Error('Cannot create ball texture');
-        ctx.clearRect(0,0,square.width,square.height);
-        const scale=Math.min(920/canvas.width,920/canvas.height);
-        const width=canvas.width*scale,height=canvas.height*scale;
-        ctx.drawImage(canvas,(1024-width)/2,(1024-height)/2,width,height);
-      }
-      const file=await this.pdf.canvasToFile(square,'kora-corrected-paper.png','image/png');
+      // Final atlas is already 1024x1024 and must NOT be recropped or padded.
+      const file = await this.pdf.canvasToFile(this.ready, 'kora-ready-ball-1024.png', 'image/png');
       await this.router.navigate(['/']);
-      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       await this.model.loadTextureFile(file);
-    }catch(error){
-      this.status.set('Applying to 3D ball failed: '+String(error));
-    }finally{this.busy.set(false);}
+    } catch (error) {
+      this.status.set('Applying to ball failed: ' + String(error));
+      console.error('[KORA texture apply]', error);
+    } finally {
+      this.busy.set(false);
+    }
   }
 }
