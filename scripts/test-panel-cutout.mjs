@@ -39,4 +39,9 @@ assert.ok(component.includes('SHOW ORIGINAL ASPECT RATIO'));
 assert.ok(component.includes('makeSquareCanvas(source:HTMLCanvasElement)'));
 assert.ok(component.includes('this.squareVersion=this.makeSquareCanvas(this.shapesOnly)'));
 assert.ok(component.includes("this.squareMode() ? 'kora-panel-shapes-square.png'"));
-console.log('Panel cutout geometry, reversible crop and square padding mode checked.');
+// Final 1:1 mode must composite transparent cutouts onto white pixels.
+assert.ok(component.includes("ctx.fillStyle='#ffffff';"));
+assert.ok(component.includes("if (this.squareMode()) {"));
+assert.ok(component.includes("Created a 1:1 square PNG with solid white background"));
+assert.ok(component.includes("this.squareMode() ? 1024 : 920"));
+console.log('Panel cutout geometry, reversible crop and opaque white-square mode checked.');

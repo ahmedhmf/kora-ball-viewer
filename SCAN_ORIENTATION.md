@@ -31,13 +31,15 @@ The printed outline registration remains approximate and can be rejected if unre
 ## Fourth step: Make 1:1
 
 After **Cut to Panel Shapes**, click **MAKE 1:1**. This centers the already cropped
-panel image on a square transparent canvas whose side equals the original
+panel image on a square **solid white** canvas whose side equals the original
 image's longest side. **No resizing, stretching or additional cropping** is
 performed. All 32 panel shapes retain their exact relative positions. Click
 **SHOW ORIGINAL ASPECT RATIO** to undo the square padding.
 
 Changing the earlier cleanup/crop stage clears square mode automatically so
 the exported preview always matches the active stage. Download yields
-`kora-panel-shapes-square.png` with alpha transparency, while Apply to Ball
+`kora-panel-shapes-square.png` with a solid white background (including gaps between the panels), while Apply to Ball
 renders the square art into the Babylon viewer's required 1024×1024 texture.
 The X/Y ruler labels continue to track the actual currently displayed canvas.
+
+The earlier **Cut to Panel Shapes** mode still remains transparent; only **Make 1:1** composites the cutout onto solid white in both downloaded PNG and ball texture.

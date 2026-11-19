@@ -50,7 +50,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
                 (click)="toggleSquareMode()">
                 {{squareMode() ? 'SHOW ORIGINAL ASPECT RATIO' : 'MAKE 1:1'}}
               </button>
-              <p class="helper">Fit the complete panel cutout into a square without cropping or stretching. The added space stays transparent.</p>
+              <p class="helper">Fit the complete panel cutout into a square without cropping or stretching. The final square has a solid white background, including between the panels.</p>
             }
             <button type="button" class="apply" [disabled]="busy() || !hasPaper()"
               (click)="applyToBall()">
@@ -318,7 +318,10 @@ export class TechpackPreparerComponent {
     square.height=size;
     const ctx=square.getContext('2d');
     if(!ctx)throw new Error('Cannot create square panel texture');
-    ctx.clearRect(0,0,size,size);
+    // Composite the transparent panel cutout onto solid white padding.
+    // This keeps every original panel pixel while making the entire PNG opaque.
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(0,0,size,size);
     const x=Math.floor((size-source.width)/2);
     const y=Math.floor((size-source.height)/2);
     ctx.drawImage(source,x,y);
@@ -337,7 +340,7 @@ export class TechpackPreparerComponent {
     this.squareVersion=this.makeSquareCanvas(this.shapesOnly);
     this.squareMode.set(true);
     this.showCanvas(this.squareVersion);
-    this.status.set('Created a 1:1 square PNG with transparent padding. No panels were cropped or stretched.');
+    this.status.set('Created a 1:1 square PNG with solid white background. No panels were cropped or stretched.');
   }
 
   private finalCanvas():HTMLCanvasElement|null{
@@ -367,8 +370,15 @@ export class TechpackPreparerComponent {
       const square=this.pdf.convertPdfPageTo3DBallTexture(canvas);
       if (this.shapesCut()) {
         const ctx=square.getContext('2d');
-        if (!ctx) throw new Error('Cannot create transparent ball texture');
-        ctx.clearRect(0,0,square.width,square.height);
+        if (!ctx) throw new Error('Cannot create ball texture');
+        if (this.squareMode()) {
+          // White final texture includes white between the shaped panels.
+          ctx.fillStyle='#ffffff';
+          ctx.fillRect(0,0,square.width,square.height);
+        } else {
+          // Preserve transparent outside areas in the pre-square cutout mode.
+          ctx.clearRect(0,0,square.width,square.height);
+        }
         const fit=this.squareMode() ? 1024 : 920;
         const scale=Math.min(fit/canvas.width,fit/canvas.height);
         const width=canvas.width*scale,height=canvas.height*scale;
