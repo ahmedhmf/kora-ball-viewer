@@ -25,11 +25,13 @@ for(let i=0;i<32;i++){
 }
 const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
 assert.ok(component.includes('PREPARE BALL TEXTURE'));
-assert.ok(component.includes('this.uvAligner.render(oriented.canvas, panels)'));
-assert.ok(component.includes('this.panelCutout.registerPanels(oriented.canvas)'));
+assert.ok(component.includes('this.panelCutout.placeFullSheetInBallUV(corrected,panels)'));
+assert.ok(component.includes('this.panelCutout.registerPanels(corrected)'));
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
 assert.ok(source.includes("if (mode === 'register') return source;"));
 assert.ok(!source.includes('refineKoraPanelCorners'), 'Unsafe per-edge snapping must not return');
 const renderer=readFileSync('src/app/services/kora-uv-align.service.ts','utf8');
-assert.ok(renderer.includes('Math.min(3 * sw / 725, 3 * sh / 1024)'), 'Conservative artwork sampling margin');
+assert.ok(renderer.includes('Math.min(3 * sw / 725, 3 * sh / 1024)'), 'Legacy renderer remains available');
+assert.ok(!component.includes('this.uvAligner.render'), 'Whole page must not invoke per-panel UV warp');
+assert.ok(source.includes('placeFullSheetInBallUV'), 'One global A3 placement');
 console.log('32 UV islands registered (12 pentagons and 20 hexagons); max center error '+error.toFixed(2)+'px.');
