@@ -41,7 +41,7 @@ assert.ok(component.includes('this.squareVersion=this.makeSquareCanvas(this.shap
 assert.ok(component.includes("this.squareMode() ? 'kora-panel-shapes-square.png'"));
 // Final 1:1 mode must composite transparent cutouts onto white pixels.
 assert.ok(source.includes("ctx.fillStyle='#ffffff';"));
-assert.ok(component.includes("if (this.squareMode()) {"));
+assert.ok(component.includes("if(this.squareMode()){"));
 assert.ok(component.includes("Created a UV-aligned 1:1 white texture"));
 assert.ok(component.includes("const square=this.squareMode()"));
 assert.ok(source.includes('placeCutoutInBallUV(cropped: HTMLCanvasElement)'));
