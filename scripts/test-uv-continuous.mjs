@@ -14,7 +14,14 @@ assert.equal(printed.length,32);
 assert.equal(uv.length,32);
 const canvases=[];
 const pixelData=new Uint8ClampedArray(1024*1024*4);
-pixelData.fill(255);
+// Encode each atlas pixel's original X/Y location in its red/green channels.
+for(let y=0;y<1024;y++)for(let x=0;x<1024;x++){
+  const p=(y*1024+x)*4;
+  pixelData[p]=x%256;
+  pixelData[p+1]=y%256;
+  pixelData[p+2]=127;
+  pixelData[p+3]=255;
+}
 const sandbox={
   exports:{},
   ImageData:class {constructor(data,width,height){this.data=data;this.width=width;this.height=height;}},
@@ -101,8 +108,33 @@ for(let panel=0;panel<32;panel++){
 assert.equal(count,180);
 assert.ok(distance/count<5,'Fit must match all 32 OBJ UV islands to reference print');
 assert.ok(maxDistance<15,'No mapped source corner should be far from the intended island');
+
+// The new smooth 2D correction should substantially reduce the distance
+// between the actual sampled artwork and the corresponding OBJ island
+// corners. Test using pixel-position channels, not just code-string checks.
+const wrapDistance=(actual,expected)=>Math.min(Math.abs(actual-expected),
+  256-Math.abs(actual-expected));
+let before=0,after=0,measurements=0;
+for(let panel=0;panel<32;panel++)for(let vertex=0;vertex<uv[panel].length;vertex++){
+  const [x,y]=from[panel][vertex], [u,v]=uv[panel][vertex];
+  const mappedX=a*x+b*y+tx,mappedY=c*x+d*y+ty;
+  // Ignore modulo-256 boundaries, where a bilinear color gradient wraps.
+  if(mappedX%256<16||mappedX%256>240||mappedY%256<16||mappedY%256>240)continue;
+  const pos=(Math.round(v)*1024+Math.round(u))*4;
+  const desiredX=mappedX%256,desiredY=mappedY%256;
+  before+=Math.hypot(
+    wrapDistance(pixelData[pos],desiredX),wrapDistance(pixelData[pos+1],desiredY));
+  after+=Math.hypot(
+    wrapDistance(correctedPixels.data[pos],desiredX),
+    wrapDistance(correctedPixels.data[pos+1],desiredY));
+  measurements++;
+}
+assert.ok(measurements>100,'Test should cover more than 100 OBJ UV corners');
+assert.ok(after < before*.6,
+  'Smooth continuous mapping must reduce mean corner sampling mismatch by at least 40%');
+
 assert.throws(()=>renderer.renderContinuous(source,[]),/32 OBJ panels/);
 const wrong=from.map(p=>p.map(v=>v.slice()));
 wrong[1][0][0]=NaN;
 assert.throws(()=>renderer.renderContinuous(source,wrong),/Invalid printed\/UV corner/);
-console.log('PASS: one uncut A3 draw, smooth local seam correction, 32 OBJ UV islands, 180 corners, mean global fit '+(distance/count).toFixed(2)+'px.');
+console.log('PASS: 32 OBJ islands, one uncut original draw, 180 corners, mean corner sampling mismatch '+(before/measurements).toFixed(2)+'px -> '+(after/measurements).toFixed(2)+'px.');
