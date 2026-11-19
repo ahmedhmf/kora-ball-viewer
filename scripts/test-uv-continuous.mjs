@@ -13,8 +13,11 @@ const uv=JSON.parse(readFileSync('src/app/services/kora-uv-panel-corners.ts','ut
 assert.equal(printed.length,32);
 assert.equal(uv.length,32);
 const canvases=[];
+const pixelData=new Uint8ClampedArray(1024*1024*4);
+pixelData.fill(255);
 const sandbox={
   exports:{},
+  ImageData:class {constructor(data,width,height){this.data=data;this.width=width;this.height=height;}},
   require:name=>{
     if(name==='@angular/core')return {Injectable:()=>target=>target};
     if(name==='./kora-uv-panel-corners')return {KORA_UV_PANEL_CORNERS:uv};
@@ -28,6 +31,8 @@ const sandbox={
       restore:()=>ops.push(['restore']),
       setTransform:(...args)=>ops.push(['setTransform',...args]),
       drawImage:(...args)=>ops.push(['drawImage',...args]),
+      getImageData:()=>({data:pixelData}),
+      putImageData:(...args)=>ops.push(['putImageData',...args]),
       fillRect:(...args)=>ops.push(['fillRect',...args]),
       beginPath:()=>ops.push(['beginPath']),
       moveTo:(...args)=>ops.push(['moveTo',...args]),
@@ -62,6 +67,14 @@ assert.equal(canvases.length,3,'One source canvas, one UV mask, one finished atl
 const [art,mask,output]=canvases;
 assert.equal(art.ops.filter(op=>op[0]==='drawImage'&&op[1]===source).length,1,
   'Draw original full source exactly once; never crop each printed panel');
+assert.equal(art.ops.filter(op=>op[0]==='putImageData').length,1,
+  'Apply exactly one smoothly varying residual correction across all panel seams');
+const correctedPixels=art.ops.find(op=>op[0]==='putImageData')[1];
+assert.equal(correctedPixels.width,1024);
+assert.equal(correctedPixels.height,1024);
+assert.ok(code.includes('gridStep=4'),'Use an interpolated continuous correction field');
+assert.ok(code.includes('radiusSquared=96*96'),'Keep corrections local to each region');
+
 assert.equal(mask.ops.filter(op=>op[0]==='beginPath').length,32,
   'Keep the precise 32 OBJ UV islands, not the centered A3 rectangle');
 assert.equal(mask.ops.filter(op=>op[0]==='stroke').length,32);
@@ -92,4 +105,4 @@ assert.throws(()=>renderer.renderContinuous(source,[]),/32 OBJ panels/);
 const wrong=from.map(p=>p.map(v=>v.slice()));
 wrong[1][0][0]=NaN;
 assert.throws(()=>renderer.renderContinuous(source,wrong),/Invalid printed\/UV corner/);
-console.log('PASS: uncut A3 source, 32 padded OBJ UV islands, 180 corners, mean fit '+(distance/count).toFixed(2)+'px.');
+console.log('PASS: one uncut A3 draw, smooth local seam correction, 32 OBJ UV islands, 180 corners, mean global fit '+(distance/count).toFixed(2)+'px.');
