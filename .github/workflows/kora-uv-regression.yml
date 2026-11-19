@@ -32,5 +32,7 @@ jobs:
         run: npm run test:uv-alignment
       - name: UV raster regression
         run: npm run test:uv-raster
+      - name: Continuous original artwork to OBJ UV atlas
+        run: npm run test:uv-continuous
       - name: Production build
         run: npm run build
