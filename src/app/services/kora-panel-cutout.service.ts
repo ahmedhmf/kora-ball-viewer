@@ -79,47 +79,75 @@ export class KoraPanelCutoutService {
   }
 
   /**
-   * Place the entire upright A3 sheet in the default 32-CLB OBJ UV atlas
-   * using ONE global scale/translation. No individual polygons are sampled,
-   * cut, transformed, masked or rotated. This also preserves handwriting
-   * that crosses printed panel borders.
+   * Produce the final 1024² ball texture from the 32 printed panel regions.
    *
-   * Registration is used only to find the global print position on the page.
-   * The destination print bounds come from the OBJ calibration already used
-   * by the original Make 1:1 feature, not from a distorted per-panel warp.
+   * A single, UNIFORM transform is applied to the entire unaltered A3 scan.
+   * We center the UNION of the registered panels (rather than the paper),
+   * keep a protective margin around their outlines, then make every pixel
+   * outside the combined mask white. No panel is ever moved or warped alone.
    */
   placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][]): HTMLCanvasElement {
     if (source.width < 2 || source.height < 2 || registeredPanels.length !== 32)
       throw new Error('Expected an upright A3 sheet with 32 registered panels');
-    const sourcePoints=registeredPanels.flat();
-    const referencePoints=this.polygons.flat();
-    if(sourcePoints.length !== referencePoints.length ||
-       !sourcePoints.every(p=>p.length===2 && p.every(Number.isFinite)))
-      throw new Error('Invalid A3 panel registration');
-    const extent=(points:number[][],axis:number):[number,number]=>[
-      Math.min(...points.map(p=>p[axis])),Math.max(...points.map(p=>p[axis]))
-    ];
-    const [sx0,sx1]=extent(sourcePoints,0),[sy0,sy1]=extent(sourcePoints,1);
-    const [rx0,rx1]=extent(referencePoints,0),[ry0,ry1]=extent(referencePoints,1);
-    if (sx1-sx0 < 10 || sy1-sy0 < 10)
-      throw new Error('Insufficient panel registration span');
+    if (registeredPanels.some((p,i) =>
+      p.length !== this.polygons[i].length ||
+      p.some(v => v.length !== 2 || !v.every(Number.isFinite))))
+      throw new Error('Invalid printed panel outlines');
 
-    const atlasScale=1024*0.00109;
-    const offsetX=1024*0.105, offsetY=1024*(-0.065);
-    const scaleX=(rx1-rx0)*atlasScale/(sx1-sx0);
-    const scaleY=(ry1-ry0)*atlasScale/(sy1-sy0);
-    const dx=offsetX+rx0*atlasScale-sx0*scaleX;
-    const dy=offsetY+ry0*atlasScale-sy0*scaleY;
+    const points=registeredPanels.flat();
+    const minX=Math.min(...points.map(p=>p[0])), maxX=Math.max(...points.map(p=>p[0]));
+    const minY=Math.min(...points.map(p=>p[1])), maxY=Math.max(...points.map(p=>p[1]));
+    const spanX=maxX-minX, spanY=maxY-minY;
+    if(spanX<10 || spanY<10)throw new Error('Insufficient panel registration span');
+
+    // Set the vertical panel silhouette to ~980px, centered in the atlas.
+    // This closely matches the real OBJ UV island layout (not the A3 paper).
+    // Use one uniform factor for both axes, so circles, writing and printed
+    // polygons preserve their proportions and original orientation.
+    const scale=Math.min(980/spanY, 980/spanX);
+    const dx=512-(minX+maxX)*.5*scale;
+    const dy=512-(minY+maxY)*.5*scale;
+
+    const art=document.createElement('canvas');
+    art.width=1024;art.height=1024;
+    const actx=art.getContext('2d');
+    if(!actx)throw new Error('Cannot prepare full-resolution panel artwork');
+    // No cropping, resampling or segmentation per panel: just one draw.
+    actx.drawImage(source,dx,dy,source.width*scale,source.height*scale);
+
+    const mask=document.createElement('canvas');
+    mask.width=1024;mask.height=1024;
+    const mctx=mask.getContext('2d');
+    if(!mctx)throw new Error('Cannot prepare combined panel mask');
+    mctx.fillStyle='#ffffff';
+    mctx.strokeStyle='#ffffff';
+    mctx.lineJoin='round';
+    mctx.lineCap='round';
+    // Protect lettering crossing the printed borders without bringing back
+    // the distant A3 page margin/QR/extraneous outside-page artwork.
+    mctx.lineWidth=16;
+    for(const polygon of registeredPanels){
+      mctx.beginPath();
+      for(let i=0;i<polygon.length;i++){
+        const x=dx+polygon[i][0]*scale,y=dy+polygon[i][1]*scale;
+        if(i===0)mctx.moveTo(x,y);
+        else mctx.lineTo(x,y);
+      }
+      mctx.closePath();
+      mctx.fill();
+      mctx.stroke();
+    }
+    actx.globalCompositeOperation='destination-in';
+    actx.drawImage(mask,0,0);
+    actx.globalCompositeOperation='source-over';
 
     const atlas=document.createElement('canvas');
     atlas.width=1024;atlas.height=1024;
     const ctx=atlas.getContext('2d');
-    if(!ctx)throw new Error('Cannot create whole-sheet OBJ UV atlas');
+    if(!ctx)throw new Error('Cannot create centered 1:1 ball texture');
     ctx.fillStyle='#ffffff';
     ctx.fillRect(0,0,1024,1024);
-    // A single drawImage is the ENTIRE image processing step. The A3 source
-    // remains intact; its blank margins are harmless white atlas pixels.
-    ctx.drawImage(source,dx,dy,source.width*scaleX,source.height*scaleY);
+    ctx.drawImage(art,0,0);
     return atlas;
   }
 
