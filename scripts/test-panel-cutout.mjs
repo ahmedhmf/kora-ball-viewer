@@ -44,7 +44,10 @@ assert.ok(!component.includes('REMOVE OUTSIDE PANELS'));
 assert.ok(!component.includes('MAKE 1:1'));
 assert.ok(!component.includes('KoraUvAlignService'));
 assert.ok(!component.includes('this.uvAligner.render'));
-assert.ok(component.includes('this.uploadedPdf'));
+assert.ok(!component.includes('this.uploadedPdf'));
+assert.ok(component.includes('const detected=this.paper.detect(input)'));
+assert.ok(!component.includes('if (!this.uploadedPdf)'));
+
 assert.ok(!component.includes('if (corrected.width >= corrected.height)'));
 assert.ok(component.includes('const oriented=await this.paper.orientPrintedSheet(corrected)'));
 assert.ok(source.includes('placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][])'));
