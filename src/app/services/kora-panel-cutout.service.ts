@@ -81,12 +81,10 @@ export class KoraPanelCutoutService {
   /**
    * Center the complete printed 32-panel net on a white 1024² texture.
    *
-   * IMPORTANT: do NOT mask each polygon. The paper registration only
-   * approximates the faint print borders, and applying those polygons as
-   * clipping paths destroyed large portions of real handwriting. Instead,
-   * crop just the enclosing RECTANGLE of the entire net with protective
-   * padding. All ink inside that rectangle survives untouched and every
-   * panel receives exactly the same uniform scale/translation.
+   * The source is cropped as ONE rectangle and drawn with a single global
+   * transform. Once the QR has verified the whole-page orientation, a broad
+   * union mask excludes stray A3/QR content while retaining artwork and ink
+   * spilling beyond faint panel borders. No panel is individually warped.
    */
   placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][]): HTMLCanvasElement {
     if (source.width < 2 || source.height < 2 || registeredPanels.length !== 32)
@@ -117,15 +115,50 @@ export class KoraPanelCutoutService {
     const scale=Math.min(976/cropWidth,976/cropHeight);
     const destWidth=cropWidth*scale,destHeight=cropHeight*scale;
     const destX=(1024-destWidth)/2,destY=(1024-destHeight)/2;
+    // Mask the UNION of all panels only after QR-based page orientation and
+    // successful print registration. A generous 28-reference-pixel bleed
+    // preserves handwriting crossing the borders. It excludes the distant QR,
+    // page instructions, scan artifacts and the A3 paper outside the net.
+    // Each panel keeps the SAME global transform; no panel is repositioned.
+    const mask=document.createElement('canvas');
+    mask.width=1024;mask.height=1024;
+    const mctx=mask.getContext('2d');
+    if(!mctx)throw new Error('Cannot create panel background mask');
+    mctx.fillStyle='#ffffff';
+    mctx.strokeStyle='#ffffff';
+    mctx.lineJoin='round';
+    mctx.lineCap='round';
+    mctx.lineWidth=56*Math.min(source.width/this.referenceWidth,
+      source.height/this.referenceHeight)*scale;
+    for(const polygon of registeredPanels){
+      mctx.beginPath();
+      polygon.forEach(([x,y],i)=>{
+        const u=destX+(x-left)*scale,v=destY+(y-top)*scale;
+        if(i===0)mctx.moveTo(u,v);
+        else mctx.lineTo(u,v);
+      });
+      mctx.closePath();
+      mctx.fill();
+      mctx.stroke();
+    }
+
+    const artwork=document.createElement('canvas');
+    artwork.width=1024;artwork.height=1024;
+    const actx=artwork.getContext('2d');
+    if(!actx)throw new Error('Cannot preserve printed panel artwork');
+    actx.drawImage(source,left,top,cropWidth,cropHeight,
+      destX,destY,destWidth,destHeight);
+    actx.globalCompositeOperation='destination-in';
+    actx.drawImage(mask,0,0);
+    actx.globalCompositeOperation='source-over';
+
     const atlas=document.createElement('canvas');
     atlas.width=1024;atlas.height=1024;
     const ctx=atlas.getContext('2d');
     if(!ctx)throw new Error('Cannot create centered 1:1 ball texture');
     ctx.fillStyle='#ffffff';
     ctx.fillRect(0,0,1024,1024);
-    // The one and only artwork draw; no destructive panel-shaped masking.
-    ctx.drawImage(source,left,top,cropWidth,cropHeight,
-      destX,destY,destWidth,destHeight);
+    ctx.drawImage(artwork,0,0);
     return atlas;
   }
 
