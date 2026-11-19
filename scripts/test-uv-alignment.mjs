@@ -29,6 +29,16 @@ assert.ok(component.includes('const panels=await this.panelCutout.registerPanels
 assert.ok(component.includes('const atlas=this.uvAligner.render(corrected,panels)'));
 assert.ok(component.includes('const panels=await this.panelCutout.registerPanels(rotated)'));
 assert.ok(component.includes('const atlas=this.uvAligner.render(rotated,panels)'));
+const prepareStart=component.indexOf('async prepareBallTexture()');
+const flipStart=component.indexOf('async flipWholeSheet()');
+const registerAt=component.indexOf('this.panelCutout.registerPanels(corrected)',prepareStart);
+const renderAt=component.indexOf('this.uvAligner.render(corrected,panels)',prepareStart);
+const rotateRegisterAt=component.indexOf('this.panelCutout.registerPanels(rotated)',flipStart);
+const rotateRenderAt=component.indexOf('this.uvAligner.render(rotated,panels)',flipStart);
+assert.ok(prepareStart>=0 && registerAt>prepareStart && renderAt>registerAt && renderAt<flipStart,
+  'The one-click flow must register the original corrected image before rendering its OBJ UV islands');
+assert.ok(flipStart>=0 && rotateRegisterAt>flipStart && rotateRenderAt>rotateRegisterAt,
+  '180° correction must re-register the rotated original before UV mapping');
 assert.ok(!component.includes('this.scanNet.render('),
   'The centered thumbnail is not an OBJ UV texture');
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
