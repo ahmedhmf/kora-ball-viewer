@@ -54,7 +54,10 @@ assert.ok(source.includes('const destY=(1024-destHeight)/2'));
 assert.ok(source.includes('const marginX=24*pxPerReferenceX'));
 assert.ok(source.includes('const marginY=24*pxPerReferenceY'));
 assert.ok(source.slice(source.indexOf('placeFullSheetInBallUV('),source.indexOf('async cutToPanelShapes(')).includes("actx.globalCompositeOperation='destination-in'"));
-assert.ok(source.includes("mctx.lineWidth=56*Math.min("));
+assert.ok(source.includes("mctx.lineWidth=32*Math.min("));
+assert.ok(source.includes('const hull=lower.slice(0,-1).concat(upper.slice(0,-1))'));
+assert.ok(!source.slice(source.indexOf('placeFullSheetInBallUV('),source.indexOf('async cutToPanelShapes(')).includes('for(const polygon of registeredPanels)'));
+
 assert.ok(component.includes('const oriented=await this.paper.orientPrintedSheet(corrected)'));
 assert.ok(component.includes('if (!oriented.reliable)'));
 assert.ok(!component.includes('if (corrected.width >= corrected.height)'));
