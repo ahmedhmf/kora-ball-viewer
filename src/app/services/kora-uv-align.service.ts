@@ -15,6 +15,25 @@ export class KoraUvAlignService {
   render(source: HTMLCanvasElement, sourcePanels: number[][][]): HTMLCanvasElement {
     if (sourcePanels.length !== 32 || KORA_UV_PANEL_CORNERS.length !== 32)
       throw new Error('Expected 32 printed panels and 32 OBJ UV panels.');
+    if (source.width < 2 || source.height < 2)
+      throw new Error('Corrected paper must contain source pixels.');
+    // Reject malformed or mirrored registrations rather than silently painting
+    // the wrong face of a panel. Both datasets use clockwise screen coordinates.
+    const twiceArea=(points:number[][]):number=>points.reduce((sum,p,i)=>{
+      const q=points[(i+1)%points.length];
+      return sum+p[0]*q[1]-q[0]*p[1];
+    },0);
+    for(let panel=0;panel<32;panel++){
+      const from=sourcePanels[panel],to=KORA_UV_PANEL_CORNERS[panel];
+      if(!Array.isArray(from) || from.length!==to.length || (to.length!==5 && to.length!==6))
+        throw new Error('Panel '+(panel+1)+' UV corner count does not match print.');
+      if(![...from,...to].every(p=>p.length===2 && p.every(Number.isFinite)))
+        throw new Error('Non-finite panel corner on panel '+(panel+1));
+      if(to.some(([x,y])=>x<0 || y<0 || x>1024 || y>1024))
+        throw new Error('UV corner outside atlas on panel '+(panel+1));
+      if(twiceArea(from)<1 || twiceArea(to)<1)
+        throw new Error('Degenerate or mirrored panel '+(panel+1));
+    }
     const sourceCtx=source.getContext('2d',{willReadFrequently:true});
     if(!sourceCtx)throw new Error('Cannot read corrected panel artwork');
     const image=sourceCtx.getImageData(0,0,source.width,source.height);
@@ -56,6 +75,9 @@ export class KoraUvAlignService {
             const ix=Math.floor(sx),iy=Math.floor(sy),fx=sx-ix,fy=sy-iy;
             const base=(iy*sw+ix)*4,below=base+sw*4;
             const dest=y*size+x;
+            // The islands are disjoint: never let a neighboring polygon
+            // overwrite a texel belonging to an earlier island.
+            if(occupied[dest])continue;
             const out=dest*4;
             // Preserve photographed color with bilinear interpolation. The
             // printed source has an opaque white paper background.
