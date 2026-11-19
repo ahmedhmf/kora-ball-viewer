@@ -22,6 +22,10 @@ jobs:
         run: npm run test:panel-cutout
       - name: Whole A3 1:1 atlas regression
         run: npm run test:a3-whole-sheet
+      - name: Scan-derived 32-panel extraction
+        run: npm run test:scan-net
+      - name: Grey A3 QR orientation
+        run: npm run test:qr-a3
       - name: UV topology and placement
         run: npm run test:uv-alignment
       - name: UV raster regression
