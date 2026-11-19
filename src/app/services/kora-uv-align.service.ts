@@ -148,6 +148,72 @@ export class KoraUvAlignService {
     actx.drawImage(source,0,0);
     actx.restore();
 
+    // A single affine transform gets the net close, but leaves a few
+    // millimetres of mismatch at individual panel seams. Smoothly correct
+    // the residuals of ALL 180 corresponding corners in destination space.
+    // This is one continuous displacement field, never 32 source cutouts.
+    // In particular, a handwritten letter crossing a border remains whole.
+    const controls=samples.map(p=>({
+      u:p.u,v:p.v,
+      dx:a*p.x+b*p.y+tx-p.u,
+      dy:c*p.x+d*p.y+ty-p.v
+    }));
+    const gridStep=4,gridSize=size/gridStep+1;
+    const gridX=new Float32Array(gridSize*gridSize);
+    const gridY=new Float32Array(gridSize*gridSize);
+    const radiusSquared=96*96,softeningSquared=4*4;
+    for(let gy=0;gy<gridSize;gy++){
+      for(let gx=0;gx<gridSize;gx++){
+        const u=gx*gridStep,v=gy*gridStep;
+        let sum=0,weightedX=0,weightedY=0;
+        for(const p of controls){
+          const distanceSquared=(u-p.u)**2+(v-p.v)**2;
+          if(distanceSquared>radiusSquared)continue;
+          // Compact, smoothly vanishing influence prevents one panel's
+          // correction from pulling distant artwork. The softening avoids
+          // singularities where neighboring island corners nearly coincide.
+          const falloff=1-distanceSquared/radiusSquared;
+          const weight=falloff*falloff/(distanceSquared+softeningSquared);
+          sum+=weight;
+          weightedX+=weight*p.dx;
+          weightedY+=weight*p.dy;
+        }
+        const index=gy*gridSize+gx;
+        gridX[index]=sum?weightedX/sum:0;
+        gridY[index]=sum?weightedY/sum:0;
+      }
+    }
+
+    const original=actx.getImageData(0,0,size,size).data;
+    const remapped=new Uint8ClampedArray(original.length);
+    for(let y=0;y<size;y++){
+      const gy=Math.floor(y/gridStep), fy=(y%gridStep)/gridStep;
+      for(let x=0;x<size;x++){
+        const gx=Math.floor(x/gridStep), fx=(x%gridStep)/gridStep;
+        const i=gy*gridSize+gx;
+        const interpolate=(field:Float32Array):number=>
+          field[i]*(1-fx)*(1-fy)+field[i+1]*fx*(1-fy)+
+          field[i+gridSize]*(1-fx)*fy+field[i+gridSize+1]*fx*fy;
+        // The base canvas contains artwork placed by the original affine.
+        // To sample a registered source corner at its exact OBJ UV corner,
+        // read from affine(sourceCorner) rather than UV(sourceCorner).
+        const sx=Math.max(0,Math.min(size-1.001,x+interpolate(gridX)));
+        const sy=Math.max(0,Math.min(size-1.001,y+interpolate(gridY)));
+        const ix=Math.floor(sx),iy=Math.floor(sy);
+        const wx=sx-ix,wy=sy-iy;
+        const p=(iy*size+ix)*4,below=p+size*4,dst=(y*size+x)*4;
+        for(let channel=0;channel<4;channel++){
+          remapped[dst+channel]=Math.round(
+            original[p+channel]*(1-wx)*(1-wy)+
+            original[p+4+channel]*wx*(1-wy)+
+            original[below+channel]*(1-wx)*wy+
+            original[below+4+channel]*wx*wy
+          );
+        }
+      }
+    }
+    actx.putImageData(new ImageData(remapped,size,size),0,0);
+
     // Clip only in DESTINATION OBJ UV space. No printed-source edge is cut.
     // A 12px protective bleed catches modest residual print-line deviations
     // while excluding the distant A3 QR, instructions and extra doodles.
