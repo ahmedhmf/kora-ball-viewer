@@ -12,6 +12,14 @@ import { Injectable } from '@angular/core';
 export class KoraPanelCutoutService {
   private registered: {source: HTMLCanvasElement; panels: number[][][]} | null = null;
 
+  /** Register all 32 outlines against the full original scan, without
+   * removing, cropping, masking or recoloring a single source pixel. */
+  async registerPanels(source: HTMLCanvasElement): Promise<number[][][]> {
+    this.registered = null;
+    await this.removeOutside(source, 'register');
+    return this.getRegisteredPanels(source);
+  }
+
   /** Validated printed panel corners in the full upright scanned image. */
   getRegisteredPanels(source: HTMLCanvasElement): number[][][] {
     if(this.registered?.source!==source)
@@ -76,7 +84,7 @@ export class KoraPanelCutoutService {
     return this.removeOutside(source, 'cut');
   }
 
-  async removeOutside(source: HTMLCanvasElement, mode: 'white' | 'cut' = 'white'): Promise<HTMLCanvasElement> {
+  async removeOutside(source: HTMLCanvasElement, mode: 'white' | 'cut' | 'register' = 'white'): Promise<HTMLCanvasElement> {
     if (source.width < 300 || source.height < 400)
       throw new Error('The straightened image is too small for panel detection.');
     const aspect = source.width / source.height;
@@ -196,6 +204,10 @@ export class KoraPanelCutoutService {
       (y*best[3]+best[1])*factorY
     ]))};
 
+
+    // The one-click ball preparation path only needs the registration.
+    // It never creates or uses the destructive intermediate cutout.
+    if (mode === 'register') return source;
 
     // One mask covering the union of all 32 panels. A generous 18px margin
     // in 725px template space protects children’s color near panel borders.
