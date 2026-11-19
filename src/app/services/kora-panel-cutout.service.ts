@@ -81,10 +81,9 @@ export class KoraPanelCutoutService {
   /**
    * Center the complete printed 32-panel net on a white 1024² texture.
    *
-   * The source is cropped as ONE rectangle and drawn with a single global
-   * transform. Once the QR has verified the whole-page orientation, a broad
-   * union mask excludes stray A3/QR content while retaining artwork and ink
-   * spilling beyond faint panel borders. No panel is individually warped.
+   * The entire printed design receives one uniform transform. A padded convex
+   * outer envelope (NOT 32 individual masks) removes distant page content
+   * while preserving everything inside the complete football net.
    */
   placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][]): HTMLCanvasElement {
     if (source.width < 2 || source.height < 2 || registeredPanels.length !== 32)
@@ -115,32 +114,51 @@ export class KoraPanelCutoutService {
     const scale=Math.min(976/cropWidth,976/cropHeight);
     const destWidth=cropWidth*scale,destHeight=cropHeight*scale;
     const destX=(1024-destWidth)/2,destY=(1024-destHeight)/2;
-    // Mask the UNION of all panels only after QR-based page orientation and
-    // successful print registration. A generous 28-reference-pixel bleed
-    // preserves handwriting crossing the borders. It excludes the distant QR,
-    // page instructions, scan artifacts and the A3 paper outside the net.
-    // Each panel keeps the SAME global transform; no panel is repositioned.
+    // Build ONE convex outer envelope around the complete net. Previous
+    // versions masked the 32 polygons separately: registration errors then
+    // erased lettering and even half of some panels. The outer silhouette
+    // leaves ALL interior ink untouched (including ink in panel gaps).
+    // Only distant A3 instructions, QR and paper background are removed.
+    const hullInput=points.map(p=>[destX+(p[0]-left)*scale,
+      destY+(p[1]-top)*scale]);
+    hullInput.sort((a,b)=>a[0]-b[0] || a[1]-b[1]);
+    const cross=(a:number[],b:number[],c:number[]):number=>
+      (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+    const lower:number[][]=[],upper:number[][]=[];
+    for(const p of hullInput){
+      while(lower.length>=2 &&
+        cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();
+      lower.push(p);
+    }
+    for(let i=hullInput.length-1;i>=0;i--){
+      const p=hullInput[i];
+      while(upper.length>=2 &&
+        cross(upper[upper.length-2],upper[upper.length-1],p)<=0)upper.pop();
+      upper.push(p);
+    }
+    const hull=lower.slice(0,-1).concat(upper.slice(0,-1));
+    if(hull.length<3)throw new Error('Cannot find the complete football net boundary');
+
     const mask=document.createElement('canvas');
     mask.width=1024;mask.height=1024;
     const mctx=mask.getContext('2d');
-    if(!mctx)throw new Error('Cannot create panel background mask');
+    if(!mctx)throw new Error('Cannot create safe net envelope');
     mctx.fillStyle='#ffffff';
     mctx.strokeStyle='#ffffff';
     mctx.lineJoin='round';
     mctx.lineCap='round';
-    mctx.lineWidth=56*Math.min(source.width/this.referenceWidth,
+    // 16px in template coordinates extends the full hull outward. No
+    // internal panel boundaries participate in masking.
+    mctx.lineWidth=32*Math.min(source.width/this.referenceWidth,
       source.height/this.referenceHeight)*scale;
-    for(const polygon of registeredPanels){
-      mctx.beginPath();
-      polygon.forEach(([x,y],i)=>{
-        const u=destX+(x-left)*scale,v=destY+(y-top)*scale;
-        if(i===0)mctx.moveTo(u,v);
-        else mctx.lineTo(u,v);
-      });
-      mctx.closePath();
-      mctx.fill();
-      mctx.stroke();
-    }
+    mctx.beginPath();
+    hull.forEach(([x,y],i)=>{
+      if(i===0)mctx.moveTo(x,y);
+      else mctx.lineTo(x,y);
+    });
+    mctx.closePath();
+    mctx.fill();
+    mctx.stroke();
 
     const artwork=document.createElement('canvas');
     artwork.width=1024;artwork.height=1024;
