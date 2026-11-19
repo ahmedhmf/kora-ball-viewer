@@ -20,6 +20,8 @@ jobs:
         run: npm run test:paper
       - name: Cutout and white atlas regression
         run: npm run test:panel-cutout
+      - name: Whole A3 1:1 atlas regression
+        run: npm run test:a3-whole-sheet
       - name: UV topology and placement
         run: npm run test:uv-alignment
       - name: UV raster regression
