@@ -191,14 +191,17 @@ export class KoraUvAlignService {
       for(let x=0;x<size;x++){
         const gx=Math.floor(x/gridStep), fx=(x%gridStep)/gridStep;
         const i=gy*gridSize+gx;
-        const interpolate=(field:Float32Array):number=>
-          field[i]*(1-fx)*(1-fy)+field[i+1]*fx*(1-fy)+
-          field[i+gridSize]*(1-fx)*fy+field[i+gridSize+1]*fx*fy;
+        const w00=(1-fx)*(1-fy),w10=fx*(1-fy);
+        const w01=(1-fx)*fy,w11=fx*fy;
         // The base canvas contains artwork placed by the original affine.
         // To sample a registered source corner at its exact OBJ UV corner,
         // read from affine(sourceCorner) rather than UV(sourceCorner).
-        const sx=Math.max(0,Math.min(size-1.001,x+interpolate(gridX)));
-        const sy=Math.max(0,Math.min(size-1.001,y+interpolate(gridY)));
+        const offsetX=gridX[i]*w00+gridX[i+1]*w10+
+          gridX[i+gridSize]*w01+gridX[i+gridSize+1]*w11;
+        const offsetY=gridY[i]*w00+gridY[i+1]*w10+
+          gridY[i+gridSize]*w01+gridY[i+gridSize+1]*w11;
+        const sx=Math.max(0,Math.min(size-1.001,x+offsetX));
+        const sy=Math.max(0,Math.min(size-1.001,y+offsetY));
         const ix=Math.floor(sx),iy=Math.floor(sy);
         const wx=sx-ix,wy=sy-iy;
         const p=(iy*size+ix)*4,below=p+size*4,dst=(y*size+x)*4;
