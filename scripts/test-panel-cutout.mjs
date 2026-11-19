@@ -60,6 +60,13 @@ assert.ok(!source.slice(source.indexOf('placeFullSheetInBallUV('),source.indexOf
 
 assert.ok(component.includes('const oriented=await this.paper.orientPrintedSheet(corrected)'));
 assert.ok(component.includes('if (!oriented.reliable)'));
+assert.ok(component.includes('async flipWholeSheet()'));
+assert.ok(component.includes('Rotate entire design 180°'));
+assert.ok(component.includes('this.panelCutout.registerPanels(rotated)'));
+assert.ok(component.includes('this.panelCutout.placeFullSheetInBallUV(rotated,panels)'));
+assert.ok(source.includes('const hull=lower.slice(0,-1).concat(upper.slice(0,-1))'));
+assert.ok(!source.slice(source.indexOf('placeFullSheetInBallUV('),source.indexOf('async cutToPanelShapes(')).includes('for(const polygon of registeredPanels)'));
+
 assert.ok(!component.includes('if (corrected.width >= corrected.height)'));
 const orientation=readFileSync('src/app/services/paper-straightener.service.ts','utf8');
 assert.ok(orientation.includes('const w = 512'), 'A3 QR fallback resolution');
