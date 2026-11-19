@@ -24,8 +24,9 @@ for(let i=0;i<32;i++){
   error=Math.max(error,d);
 }
 const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
-assert.ok(component.includes('ALIGN PANELS TO 3D BALL'));
-assert.ok(component.includes('SHOW ORIGINAL 1:1 IMAGE'));
-assert.ok(component.includes('this.uvAligner.render(this.straightened,panels)'));
+assert.ok(component.includes('PREPARE BALL TEXTURE'));
+assert.ok(component.includes('this.uvAligner.render(oriented.canvas, panels)'));
+assert.ok(component.includes('this.panelCutout.registerPanels(oriented.canvas)'));
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
+assert.ok(source.includes("if (mode === 'register') return source;"));
 console.log('32 UV islands registered (12 pentagons and 20 hexagons); max center error '+error.toFixed(2)+'px.');
