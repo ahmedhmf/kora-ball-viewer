@@ -171,7 +171,13 @@ export class PaperStraightenerService {
       const rgba = ctx.getImageData(0, 0, w, h).data;
       const gray = new Uint8Array(w * h);
       for (let i = 0; i < gray.length; i++) {
-        gray[i] = Math.round(.299 * rgba[4*i] + .587 * rgba[4*i+1] + .114 * rgba[4*i+2]);
+        const r=rgba[4*i],g=rgba[4*i+1],b=rgba[4*i+2];
+        const chroma=Math.max(r,g,b)-Math.min(r,g,b);
+        const lightness=(r+g+b)/3;
+        // QR modules are nearly neutral black/white. Exclude red, orange
+        // and blue marker ink, which previously created false corner hits.
+        gray[i]=chroma < 27 && lightness < 205
+          ? Math.round(lightness) : 255;
       }
       const xSize = Math.round(w * .28), ySize = Math.round(h * .28);
       const scores: number[] = [];
@@ -192,7 +198,7 @@ export class PaperStraightenerService {
         .sort((a,b)=>b.score-a.score);
       // Don't rotate on a small or ambiguous signal; any red scribbles on a
       // corner can also create high-frequency features.
-      if (ranking[0].score >= 65 && ranking[0].score >= 1.6 * Math.max(1,ranking[1].score)) {
+      if (ranking[0].score >= 65 && ranking[0].score >= 2.0 * Math.max(1,ranking[1].score)) {
         angle = rotateForCorner(ranking[0].corner);
         reliable = true;
       }
