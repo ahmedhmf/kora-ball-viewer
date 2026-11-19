@@ -79,12 +79,14 @@ export class KoraPanelCutoutService {
   }
 
   /**
-   * Produce the final 1024² ball texture from the 32 printed panel regions.
+   * Center the complete printed 32-panel net on a white 1024² texture.
    *
-   * A single, UNIFORM transform is applied to the entire unaltered A3 scan.
-   * We center the UNION of the registered panels (rather than the paper),
-   * keep a protective margin around their outlines, then make every pixel
-   * outside the combined mask white. No panel is ever moved or warped alone.
+   * IMPORTANT: do NOT mask each polygon. The paper registration only
+   * approximates the faint print borders, and applying those polygons as
+   * clipping paths destroyed large portions of real handwriting. Instead,
+   * crop just the enclosing RECTANGLE of the entire net with protective
+   * padding. All ink inside that rectangle survives untouched and every
+   * panel receives exactly the same uniform scale/translation.
    */
   placeFullSheetInBallUV(source: HTMLCanvasElement, registeredPanels: number[][][]): HTMLCanvasElement {
     if (source.width < 2 || source.height < 2 || registeredPanels.length !== 32)
@@ -95,59 +97,35 @@ export class KoraPanelCutoutService {
       throw new Error('Invalid printed panel outlines');
 
     const points=registeredPanels.flat();
-    const minX=Math.min(...points.map(p=>p[0])), maxX=Math.max(...points.map(p=>p[0]));
-    const minY=Math.min(...points.map(p=>p[1])), maxY=Math.max(...points.map(p=>p[1]));
-    const spanX=maxX-minX, spanY=maxY-minY;
-    if(spanX<10 || spanY<10)throw new Error('Insufficient panel registration span');
+    const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+    // Use the measured registration only for the outer bounds of the net,
+    // never for masking a panel or changing the pixels inside its boundaries.
+    const pxPerReferenceX=source.width/this.referenceWidth;
+    const pxPerReferenceY=source.height/this.referenceHeight;
+    const marginX=24*pxPerReferenceX;
+    const marginY=24*pxPerReferenceY;
+    const left=Math.max(0,Math.floor(Math.min(...xs)-marginX));
+    const right=Math.min(source.width,Math.ceil(Math.max(...xs)+marginX));
+    const top=Math.max(0,Math.floor(Math.min(...ys)-marginY));
+    const bottom=Math.min(source.height,Math.ceil(Math.max(...ys)+marginY));
+    const cropWidth=right-left,cropHeight=bottom-top;
+    if(cropWidth<100||cropHeight<100)
+      throw new Error('Could not locate the complete printed A3 design');
 
-    // Set the vertical panel silhouette to ~980px, centered in the atlas.
-    // This closely matches the real OBJ UV island layout (not the A3 paper).
-    // Use one uniform factor for both axes, so circles, writing and printed
-    // polygons preserve their proportions and original orientation.
-    const scale=Math.min(980/spanY, 980/spanX);
-    const dx=512-(minX+maxX)*.5*scale;
-    const dy=512-(minY+maxY)*.5*scale;
-
-    const art=document.createElement('canvas');
-    art.width=1024;art.height=1024;
-    const actx=art.getContext('2d');
-    if(!actx)throw new Error('Cannot prepare full-resolution panel artwork');
-    // No cropping, resampling or segmentation per panel: just one draw.
-    actx.drawImage(source,dx,dy,source.width*scale,source.height*scale);
-
-    const mask=document.createElement('canvas');
-    mask.width=1024;mask.height=1024;
-    const mctx=mask.getContext('2d');
-    if(!mctx)throw new Error('Cannot prepare combined panel mask');
-    mctx.fillStyle='#ffffff';
-    mctx.strokeStyle='#ffffff';
-    mctx.lineJoin='round';
-    mctx.lineCap='round';
-    // Protect lettering crossing the printed borders without bringing back
-    // the distant A3 page margin/QR/extraneous outside-page artwork.
-    mctx.lineWidth=16;
-    for(const polygon of registeredPanels){
-      mctx.beginPath();
-      for(let i=0;i<polygon.length;i++){
-        const x=dx+polygon[i][0]*scale,y=dy+polygon[i][1]*scale;
-        if(i===0)mctx.moveTo(x,y);
-        else mctx.lineTo(x,y);
-      }
-      mctx.closePath();
-      mctx.fill();
-      mctx.stroke();
-    }
-    actx.globalCompositeOperation='destination-in';
-    actx.drawImage(mask,0,0);
-    actx.globalCompositeOperation='source-over';
-
+    // Center the bounds of the actual print, not the A3 paper margins.
+    // Uniform scaling is essential: no panel is distorted or rotated.
+    const scale=Math.min(976/cropWidth,976/cropHeight);
+    const destWidth=cropWidth*scale,destHeight=cropHeight*scale;
+    const destX=(1024-destWidth)/2,destY=(1024-destHeight)/2;
     const atlas=document.createElement('canvas');
     atlas.width=1024;atlas.height=1024;
     const ctx=atlas.getContext('2d');
     if(!ctx)throw new Error('Cannot create centered 1:1 ball texture');
     ctx.fillStyle='#ffffff';
     ctx.fillRect(0,0,1024,1024);
-    ctx.drawImage(art,0,0);
+    // The one and only artwork draw; no destructive panel-shaped masking.
+    ctx.drawImage(source,left,top,cropWidth,cropHeight,
+      destX,destY,destWidth,destHeight);
     return atlas;
   }
 
