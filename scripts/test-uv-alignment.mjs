@@ -29,4 +29,7 @@ assert.ok(component.includes('this.uvAligner.render(oriented.canvas, panels)'));
 assert.ok(component.includes('this.panelCutout.registerPanels(oriented.canvas)'));
 assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
 assert.ok(source.includes("if (mode === 'register') return source;"));
+assert.ok(!source.includes('refineKoraPanelCorners'), 'Unsafe per-edge snapping must not return');
+const renderer=readFileSync('src/app/services/kora-uv-align.service.ts','utf8');
+assert.ok(renderer.includes('Math.min(3 * sw / 725, 3 * sh / 1024)'), 'Conservative artwork sampling margin');
 console.log('32 UV islands registered (12 pentagons and 20 hexagons); max center error '+error.toFixed(2)+'px.');
