@@ -47,9 +47,9 @@ export class KoraScanNetService {
     // runs: upper, broad middle and lower. This excludes the QR and page
     // instructions without trying to identify handwriting or trim a panel.
     const zones=[
-      [330,45,600,265],
-      [205,210,670,665],
-      [195,620,575,945]
+      [310,45,615,350],
+      [205,320,670,685],
+      [195,650,575,945]
     ];
     const hulls:number[][][]=[];
     for(const [left,top,right,bottom] of zones){
