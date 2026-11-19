@@ -155,14 +155,15 @@ export class TechpackPreparerComponent {
       this.status.set('Preparing the upright A3 page...');
       const input=this.original;
       let corrected=input;
-      // PDF exports are already geometrically flat; perspective detection on
-      // them can confuse an ink line with the edge of photographed paper.
-      if (!this.uploadedPdf) {
-        const detected=this.paper.detect(input);
-        if (detected.confidence === 'detected') {
-          const corners=this.paper.corners(input,detected.topRight,detected.bottomRight);
-          corrected=await this.paper.straighten(input,corners);
-        }
+      // A PDF can be a scanned PHOTO (the supplied WhatsApp A3 is one).
+      // Do not skip perspective correction because the container is .pdf.
+      // The detector requires a long, consistently visible paper/table edge;
+      // when it is not detected, retain the complete unmodified source.
+      const detected=this.paper.detect(input);
+      if (detected.confidence === 'detected') {
+        this.status.set('Straightening the photographed A3 paper...');
+        const corners=this.paper.corners(input,detected.topRight,detected.bottomRight);
+        corrected=await this.paper.straighten(input,corners);
       }
       // Portrait paper can still be upside down. Always look for the
       // KORA QR marker and orient the WHOLE page, before any registration
