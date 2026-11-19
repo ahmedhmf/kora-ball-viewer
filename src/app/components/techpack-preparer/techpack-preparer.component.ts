@@ -169,8 +169,10 @@ export class TechpackPreparerComponent {
       // or cropping. Rotating only landscape pages caused the 180° failure.
       this.status.set('Orienting the A3 print using its QR marker...');
       const oriented=await this.paper.orientPrintedSheet(corrected);
-      if (!oriented.reliable)
-        throw new Error('Cannot verify page orientation from the QR marker. Upload the original A3 scan with the QR visible; no panels have been cropped.');
+      // QR detection is advisory. Faint or partially scanned QR marks should
+      // not block an otherwise usable A3 sheet. The user can flip the whole
+      // original sheet with the 180° control after preparation.
+      const orientationUncertain=!oriented.reliable;
       corrected=oriented.canvas;
       const ratio=corrected.width/corrected.height;
       if (ratio < .62 || ratio > .79)
@@ -183,7 +185,9 @@ export class TechpackPreparerComponent {
       this.ready = atlas;
       this.prepared.set(true);
       this.showCanvas(atlas);
-      this.status.set('Ready: whole football print centered, with all panel artwork preserved.');
+      this.status.set(orientationUncertain
+        ? 'Texture prepared. QR orientation was uncertain: check the preview, and use Rotate entire design 180° if upside down.'
+        : 'Ready: whole football print centered, with all panel artwork preserved.');
     } catch (error) {
       this.prepared.set(false);
       this.ready = null;
