@@ -10,7 +10,7 @@ import { Injectable } from '@angular/core';
  */
 @Injectable({ providedIn: 'root' })
 export class KoraPanelCutoutService {
-  private registered: {source: HTMLCanvasElement; panels: number[][][]} | null = null;
+  private registered: {source: HTMLCanvasElement; panels: number[][][]; score: number} | null = null;
 
   /** Register all 32 outlines against the full original scan, without
    * removing, cropping, masking or recoloring a single source pixel. */
@@ -25,6 +25,14 @@ export class KoraPanelCutoutService {
     if(this.registered?.source!==source)
       throw new Error('Please prepare the scan before UV alignment.');
     return this.registered.panels;
+  }
+
+  /** Lower means the printed 32-panel layout matches the scan better.
+   * Useful for resolving ambiguous 0° vs 180° QR orientation without ink masks. */
+  getRegistrationScore(source: HTMLCanvasElement): number {
+    if(this.registered?.source!==source)
+      throw new Error('Register this A3 page before reading its alignment score.');
+    return this.registered.score;
   }
 
   private readonly referenceWidth = 725;
@@ -307,7 +315,7 @@ export class KoraPanelCutoutService {
     this.registered={source,panels:this.polygons.map(polygon=>polygon.map(([x,y])=>[
       (x*best[2]+best[0])*factorX,
       (y*best[3]+best[1])*factorY
-    ]))};
+    ])),score:bestScore};
 
 
     // The one-click ball preparation path only needs the registration.
