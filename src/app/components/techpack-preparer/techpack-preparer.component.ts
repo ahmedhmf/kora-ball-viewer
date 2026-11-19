@@ -37,6 +37,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
+            <button type="button" [disabled]="busy()" (click)="flipWholeSheet()">Rotate entire design 180°</button>
             <button type="button" [disabled]="busy()" (click)="download()">Download ready PNG</button>
             <button type="button" [disabled]="busy()" (click)="applyToBall()">Apply to 3D Ball</button>
           }
@@ -81,6 +82,7 @@ export class TechpackPreparerComponent {
   private original: HTMLCanvasElement | null = null;
   private uploadedPdf = false;
   private ready: HTMLCanvasElement | null = null;
+  private preparedSource: HTMLCanvasElement | null = null;
   readonly hasImage = signal(false);
   readonly prepared = signal(false);
   readonly busy = signal(false);
@@ -99,6 +101,7 @@ export class TechpackPreparerComponent {
     this.original = null;
     this.uploadedPdf = false;
     this.ready = null;
+    this.preparedSource = null;
     this.status.set('Reading original page...');
     try {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -173,6 +176,7 @@ export class TechpackPreparerComponent {
       if (ratio < .62 || ratio > .79)
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
       this.status.set('Locating the full printed design on the A3 sheet...');
+      this.preparedSource=corrected;
       const panels=await this.panelCutout.registerPanels(corrected);
       this.status.set('Centering the 32-panel print and clearing external page marks...');
       const atlas=this.panelCutout.placeFullSheetInBallUV(corrected,panels);
@@ -186,6 +190,39 @@ export class TechpackPreparerComponent {
       this.showCanvas(this.original);
       this.status.set('Preparation failed: ' + String(error));
       console.error('[KORA one-click UV preparation]', error);
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  /**
+   * Optional orientation correction for scans where the QR decoder gives a
+   * false corner. Rotate the source A3 page and perform a NEW registration:
+   * flipping only an already cropped atlas could keep incorrectly cut ink.
+   */
+  async flipWholeSheet(): Promise<void> {
+    if (!this.preparedSource || !this.prepared() || this.busy()) return;
+    this.busy.set(true);
+    this.status.set('Rotating the entire A3 sheet 180° and rebuilding texture...');
+    try {
+      const source=this.preparedSource;
+      const rotated=document.createElement('canvas');
+      rotated.width=source.width;
+      rotated.height=source.height;
+      const ctx=rotated.getContext('2d');
+      if(!ctx)throw new Error('Cannot rotate original A3 artwork');
+      ctx.translate(rotated.width,rotated.height);
+      ctx.rotate(Math.PI);
+      ctx.drawImage(source,0,0);
+      const panels=await this.panelCutout.registerPanels(rotated);
+      const atlas=this.panelCutout.placeFullSheetInBallUV(rotated,panels);
+      this.preparedSource=rotated;
+      this.ready=atlas;
+      this.showCanvas(atlas);
+      this.status.set('Whole-sheet orientation flipped 180°. All panel artwork retained.');
+    } catch(error) {
+      this.status.set('Could not flip the A3 design: '+String(error));
+      console.error('[KORA whole-page rotate]',error);
     } finally {
       this.busy.set(false);
     }
