@@ -20,6 +20,8 @@ jobs:
         run: npm run test:paper
       - name: Cutout and white atlas regression
         run: npm run test:panel-cutout
+      - name: Detect and refine printed panel borders
+        run: npm run test:panel-registration
       - name: UV topology and placement
         run: npm run test:uv-alignment
       - name: UV raster regression
