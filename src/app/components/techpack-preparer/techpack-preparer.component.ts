@@ -172,17 +172,46 @@ export class TechpackPreparerComponent {
       // QR detection is advisory. Faint or partially scanned QR marks should
       // not block an otherwise usable A3 sheet. The user can flip the whole
       // original sheet with the 180° control after preparation.
-      const orientationUncertain=!oriented.reliable;
+      let orientationUncertain=!oriented.reliable;
       corrected=oriented.canvas;
       const ratio=corrected.width/corrected.height;
       if (ratio < .62 || ratio > .79)
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
-      this.status.set('Registering all 32 printed panel boundaries...');
-      // Register against the ENTIRE perspective-corrected scan. Do not
-      // supply a masked, cropped or re-centered preview to the UV renderer:
-      // those images no longer share the printed template's coordinates.
-      const panels=await this.panelCutout.registerPanels(corrected);
-      this.status.set('Mapping the registered panels into the OBJ UV islands...');
+      this.status.set('Registering the 32 printed outlines and checking orientation...');
+
+      // QR codes can be blurred in WhatsApp scans. Independently fit the
+      // printed 32-panel template in BOTH portrait orientations. The real
+      // A3 layout should match the correctly rotated page more closely.
+      // Avoid silently choosing a QR corner based on colorful handwriting.
+      const rotated=this.rotatePage180(corrected);
+      let first: {panels:number[][][]; score:number} | null=null;
+      let second: {panels:number[][][]; score:number} | null=null;
+      try {
+        const panels=await this.panelCutout.registerPanels(corrected);
+        first={panels,score:this.panelCutout.getRegistrationScore(corrected)};
+      } catch(error) {
+        console.warn('[KORA 0-degree registration]',error);
+      }
+      try {
+        const panels=await this.panelCutout.registerPanels(rotated);
+        second={panels,score:this.panelCutout.getRegistrationScore(rotated)};
+      } catch(error) {
+        console.warn('[KORA 180-degree registration]',error);
+      }
+      if(!first && !second)
+        throw new Error('Neither A3 orientation matches the 32 printed panels. Check that the full sheet is visible.');
+      // A modest difference is enough when QR is uncertain; when the QR
+      // decoder was confident, require a stronger geometric contradiction.
+      const minimumImprovement=oriented.reliable ? 0.8 : 0.25;
+      const useRotated=!!second && (!first ||
+        second.score + minimumImprovement < first.score);
+      if(useRotated) {
+        corrected=rotated;
+        orientationUncertain=false;
+      }
+      const panels=(useRotated ? second : first)?.panels;
+      if(!panels)throw new Error('Cannot obtain the registered 32-panel template.');
+      this.status.set('Mapping all 32 printed panels into the OBJ UV islands...');
       await new Promise<void>(resolve=>setTimeout(resolve,0));
       const atlas=this.uvAligner.render(corrected,panels);
       this.preparedSource=corrected;
@@ -208,20 +237,24 @@ export class TechpackPreparerComponent {
    * false corner. Rotate the source A3 page and perform a NEW registration:
    * flipping only an already cropped atlas could keep incorrectly cut ink.
    */
+  private rotatePage180(source: HTMLCanvasElement): HTMLCanvasElement {
+    const rotated=document.createElement('canvas');
+    rotated.width=source.width;
+    rotated.height=source.height;
+    const ctx=rotated.getContext('2d');
+    if(!ctx)throw new Error('Cannot rotate original A3 artwork');
+    ctx.translate(rotated.width,rotated.height);
+    ctx.rotate(Math.PI);
+    ctx.drawImage(source,0,0);
+    return rotated;
+  }
+
   async flipWholeSheet(): Promise<void> {
     if (!this.preparedSource || !this.prepared() || this.busy()) return;
     this.busy.set(true);
     this.status.set('Rotating the entire A3 sheet 180° and rebuilding texture...');
     try {
-      const source=this.preparedSource;
-      const rotated=document.createElement('canvas');
-      rotated.width=source.width;
-      rotated.height=source.height;
-      const ctx=rotated.getContext('2d');
-      if(!ctx)throw new Error('Cannot rotate original A3 artwork');
-      ctx.translate(rotated.width,rotated.height);
-      ctx.rotate(Math.PI);
-      ctx.drawImage(source,0,0);
+      const rotated=this.rotatePage180(this.preparedSource);
       const panels=await this.panelCutout.registerPanels(rotated);
       const atlas=this.uvAligner.render(rotated,panels);
       this.preparedSource=rotated;
