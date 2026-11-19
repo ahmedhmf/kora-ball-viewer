@@ -105,13 +105,13 @@ export class KoraUvAlignService {
       // Preserve ink and printed outlines that extend just beyond the
       // estimated print edges. The previous hard clipping lost entire
       // portions of letters and borders when the polygon fit was off by
-      // a few source pixels. Pull a small (3px at reference resolution)
+      // a few source pixels. Pull a small (6px at reference resolution)
       // neighborhood into the UV island without changing its destination
       // footprint or accidentally sampling a masked/cropped intermediate.
       const center = from.reduce((sum, p) => [sum[0] + p[0] / from.length,
         sum[1] + p[1] / from.length], [0, 0]);
       const radius = from.reduce((sum, p) => sum + Math.hypot(p[0] - center[0], p[1] - center[1]), 0) / from.length;
-      const extra = Math.min(3 * sw / 725, 3 * sh / 1024);
+      const extra = Math.min(6 * sw / 725, 6 * sh / 1024);
       const expanded = from.map(p => [center[0] + (p[0] - center[0]) * (1 + extra / radius),
         center[1] + (p[1] - center[1]) * (1 + extra / radius)]);
       const xs = to.map(p => p[0]), ys = to.map(p => p[1]);
