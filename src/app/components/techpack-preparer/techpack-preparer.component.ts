@@ -18,7 +18,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
       <header>
         <div>
           <h2>KORA BALL TEXTURE PREPARER</h2>
-          <p>Upload the original A3 PDF or an upright full-page photograph. Prepare the entire print in one click.</p>
+          <p>Upload the original A3 PDF or upright photograph. Center only the printed football panels in one click.</p>
         </div>
         <a routerLink="/">Back to 3D Ball</a>
       </header>
@@ -33,7 +33,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Converts the complete upright A3 sheet into a white 1:1 OBJ texture using one global transform. No panel cutting, masking or individual rotation.</p>
+            <p class="helper">Centers the 32 printed panels on a white 1:1 texture, hides the surrounding A3 paper, and preserves the original panel artwork without rotating or warping individual panels.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -172,12 +172,12 @@ export class TechpackPreparerComponent {
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
       this.status.set('Locating the full printed design on the A3 sheet...');
       const panels=await this.panelCutout.registerPanels(corrected);
-      this.status.set('Building 1:1 texture from the whole page — no panel cuts...');
+      this.status.set('Centering the 32 printed panels and removing the outside paper...');
       const atlas=this.panelCutout.placeFullSheetInBallUV(corrected,panels);
       this.ready = atlas;
       this.prepared.set(true);
       this.showCanvas(atlas);
-      this.status.set('Ready: whole A3 page scaled into the OBJ 1:1 texture without panel warping.');
+      this.status.set('Ready: 32 printed panels centered on white 1:1 texture. No panel was individually warped.');
     } catch (error) {
       this.prepared.set(false);
       this.ready = null;
