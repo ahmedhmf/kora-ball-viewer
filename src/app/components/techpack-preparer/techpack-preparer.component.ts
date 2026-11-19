@@ -80,7 +80,6 @@ export class TechpackPreparerComponent {
   private readonly router = inject(Router);
 
   private original: HTMLCanvasElement | null = null;
-  private uploadedPdf = false;
   private ready: HTMLCanvasElement | null = null;
   private preparedSource: HTMLCanvasElement | null = null;
   readonly hasImage = signal(false);
@@ -99,13 +98,11 @@ export class TechpackPreparerComponent {
     this.hasImage.set(false);
     this.prepared.set(false);
     this.original = null;
-    this.uploadedPdf = false;
     this.ready = null;
     this.preparedSource = null;
     this.status.set('Reading original page...');
     try {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      this.uploadedPdf = isPdf;
       if (isPdf) {
         const pdfDocument = await this.pdf.loadPdfDocument(file);
         try {
@@ -145,7 +142,7 @@ export class TechpackPreparerComponent {
     }
   }
 
-  /** Runs all preparation internally, but never uses intermediate masked images. */
+  /** Straighten the complete A3 photo, orient the whole page, and safely extract its net. */
   async prepareBallTexture(): Promise<void> {
     if (!this.original || this.busy()) return;
     this.busy.set(true);
