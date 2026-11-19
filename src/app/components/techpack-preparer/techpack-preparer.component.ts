@@ -33,7 +33,7 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Centers the complete football print on white 1:1, cropping away distant A3 margins with a safety border. Never clips individual panels or handwriting.</p>
+            <p class="helper">Orients the A3 page using its QR, centers the 32-panel print and clears external paper marks. Artwork is protected by a wide border margin; individual panels are never warped.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -174,7 +174,7 @@ export class TechpackPreparerComponent {
         throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
       this.status.set('Locating the full printed design on the A3 sheet...');
       const panels=await this.panelCutout.registerPanels(corrected);
-      this.status.set('Centering the complete print with safe margins (no panel masking)...');
+      this.status.set('Centering the 32-panel print and clearing external page marks...');
       const atlas=this.panelCutout.placeFullSheetInBallUV(corrected,panels);
       this.ready = atlas;
       this.prepared.set(true);
