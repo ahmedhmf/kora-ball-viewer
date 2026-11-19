@@ -74,6 +74,116 @@ export class KoraUvAlignService {
     return [sx / total, sy / total];
   }
 
+  /**
+   * Render the complete, original A3 artwork through ONE globally fitted
+   * affine transform into the real 32-CLB.obj UV atlas.
+   *
+   * Both the printed KORA net and this OBJ are the SAME 32-panel net layout.
+   * Across all 180 corresponding panel vertices their atlas positions differ
+   * by only a few pixels after a global affine fit. Independently sampling
+   * each source polygon destroyed handwritten strokes crossing estimated
+   * panel boundaries, so the one-click workflow must NEVER call render().
+   *
+   * The destination mask is made from the actual OBJ UV islands, with 12px
+   * bleed. It only removes distant paper/QR marks; no SOURCE polygon is
+   * clipped or resampled independently.
+   */
+  renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][]): HTMLCanvasElement {
+    if (source.width<2 || source.height<2 || sourcePanels.length!==32 ||
+      KORA_UV_PANEL_CORNERS.length!==32)
+      throw new Error('Expected an A3 page registered to 32 OBJ panels.');
+    const samples: Array<{x:number;y:number;u:number;v:number}>=[];
+    for(let panel=0;panel<32;panel++){
+      const from=sourcePanels[panel], to=KORA_UV_PANEL_CORNERS[panel];
+      if(!Array.isArray(from)||from.length!==to.length ||
+        (from.length!==5&&from.length!==6))
+        throw new Error('Mismatched polygon corners for panel '+(panel+1));
+      for(let vertex=0;vertex<from.length;vertex++){
+        const [x,y]=from[vertex], [u,v]=to[vertex];
+        if(![x,y,u,v].every(Number.isFinite))
+          throw new Error('Invalid printed/UV corner for panel '+(panel+1));
+        samples.push({x,y,u,v});
+      }
+    }
+
+    // Solve the least-squares affine transform [x,y,1] -> [u,v].
+    // Unlike a polygon-by-polygon warp this is continuous over every seam.
+    const m=[[0,0,0],[0,0,0],[0,0,0]], bu=[0,0,0],bv=[0,0,0];
+    for(const p of samples){
+      const q=[p.x,p.y,1];
+      for(let i=0;i<3;i++){
+        bu[i]+=q[i]*p.u;
+        bv[i]+=q[i]*p.v;
+        for(let j=0;j<3;j++)m[i][j]+=q[i]*q[j];
+      }
+    }
+    const solve=(rhs:number[]):number[]=>{
+      const a=m.map((row,i)=>[...row,rhs[i]]);
+      for(let i=0;i<3;i++){
+        let pivot=i;
+        for(let j=i+1;j<3;j++)
+          if(Math.abs(a[j][i])>Math.abs(a[pivot][i]))pivot=j;
+        if(Math.abs(a[pivot][i])<1e-9)throw new Error('Degenerate A3 panel registration.');
+        [a[i],a[pivot]]=[a[pivot],a[i]];
+        const divisor=a[i][i];
+        for(let j=i;j<4;j++)a[i][j]/=divisor;
+        for(let k=0;k<3;k++)if(k!==i){
+          const factor=a[k][i];
+          for(let j=i;j<4;j++)a[k][j]-=factor*a[i][j];
+        }
+      }
+      return a.map(row=>row[3]);
+    };
+    const [a,b,tx]=solve(bu), [c,d,ty]=solve(bv);
+    if(![a,b,c,d,tx,ty].every(Number.isFinite) || a*d-b*c<=0)
+      throw new Error('Mirrored or invalid A3-to-OBJ UV registration.');
+
+    const size=this.size;
+    const art=document.createElement('canvas');
+    art.width=size;art.height=size;
+    const actx=art.getContext('2d');
+    if(!actx)throw new Error('Cannot prepare continuous A3 artwork');
+    actx.save();
+    actx.setTransform(a,c,b,d,tx,ty);
+    actx.drawImage(source,0,0);
+    actx.restore();
+
+    // Clip only in DESTINATION OBJ UV space. No printed-source edge is cut.
+    // A 12px protective bleed catches modest residual print-line deviations
+    // while excluding the distant A3 QR, instructions and extra doodles.
+    const mask=document.createElement('canvas');
+    mask.width=size;mask.height=size;
+    const maskCtx=mask.getContext('2d');
+    if(!maskCtx)throw new Error('Cannot prepare OBJ UV island mask');
+    maskCtx.fillStyle='#ffffff';
+    maskCtx.strokeStyle='#ffffff';
+    maskCtx.lineJoin='round';
+    maskCtx.lineCap='round';
+    maskCtx.lineWidth=24;
+    for(const polygon of KORA_UV_PANEL_CORNERS){
+      maskCtx.beginPath();
+      polygon.forEach(([x,y],i)=>{
+        if(i===0)maskCtx.moveTo(x,y);
+        else maskCtx.lineTo(x,y);
+      });
+      maskCtx.closePath();
+      maskCtx.fill();
+      maskCtx.stroke();
+    }
+    actx.globalCompositeOperation='destination-in';
+    actx.drawImage(mask,0,0);
+    actx.globalCompositeOperation='source-over';
+
+    const result=document.createElement('canvas');
+    result.width=size;result.height=size;
+    const ctx=result.getContext('2d');
+    if(!ctx)throw new Error('Cannot create white OBJ texture');
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(0,0,size,size);
+    ctx.drawImage(art,0,0);
+    return result;
+  }
+
   render(source: HTMLCanvasElement, sourcePanels: number[][][]): HTMLCanvasElement {
     if (sourcePanels.length !== 32 || KORA_UV_PANEL_CORNERS.length !== 32)
       throw new Error('Expected 32 printed panels and 32 OBJ UV panels.');
