@@ -159,48 +159,58 @@ export class PaperStraightenerService {
     }
 
     if (!reliable) {
-      // QR modules are tiny in A3 scans; 256px erased their structure.
-      // Probe at 512px so corner-pattern density remains measurable.
-      const w = 512;
-      const h = Math.max(128, Math.round(w * source.height / source.width));
-      const probe = document.createElement('canvas');
-      probe.width = w; probe.height = h;
-      const ctx = probe.getContext('2d', { willReadFrequently: true });
-      if (!ctx) throw new Error('Cannot inspect printed page orientation');
-      ctx.drawImage(source, 0, 0, w, h);
-      const rgba = ctx.getImageData(0, 0, w, h).data;
-      const gray = new Uint8Array(w * h);
-      for (let i = 0; i < gray.length; i++) {
-        const r=rgba[4*i],g=rgba[4*i+1],b=rgba[4*i+2];
-        const chroma=Math.max(r,g,b)-Math.min(r,g,b);
-        const lightness=(r+g+b)/3;
-        // QR modules are nearly neutral black/white. Exclude red, orange
-        // and blue marker ink, which previously created false corner hits.
-        gray[i]=chroma < 27 && lightness < 205
-          ? Math.round(lightness) : 255;
+      // The A3 WhatsApp scan uses a grey (rather than sharp black) printed QR.
+      // Detect a SMALL dense two-axis checkerboard in the physical QR regions,
+      // not handwriting anywhere in the entire corner. The previous whole-
+      // corner edge count chose red writing or returned "uncertain".
+      const w=512,h=Math.max(128,Math.round(w*source.height/source.width));
+      const probe=document.createElement('canvas');
+      probe.width=w;probe.height=h;
+      const ctx=probe.getContext('2d',{willReadFrequently:true});
+      if(!ctx)throw new Error('Cannot inspect QR orientation');
+      ctx.drawImage(source,0,0,w,h);
+      const rgba=ctx.getImageData(0,0,w,h).data;
+      const dark=new Uint8Array(w*h);
+      for(let i=0;i<dark.length;i++){
+        const r=rgba[i*4],g=rgba[i*4+1],b=rgba[i*4+2];
+        dark[i]=Math.max(r,g,b)-Math.min(r,g,b)<28 &&
+          (r+g+b)/3<235 ? 1 : 0;
       }
-      const xSize = Math.round(w * .28), ySize = Math.round(h * .28);
-      const scores: number[] = [];
-      for (const [right,bottom] of [[false,false],[true,false],[false,true],[true,true]]) {
-        const x0 = right ? w - xSize : 0;
-        const y0 = bottom ? h - ySize : 0;
-        let score = 0;
-        for (let y = y0 + 1; y < y0 + ySize - 1; y++) {
-          for (let x = x0 + 1; x < x0 + xSize - 1; x++) {
-            const i = y*w+x;
-            if (Math.abs(gray[i-1]-gray[i+1]) > 28 &&
-                Math.abs(gray[i-w]-gray[i+w]) > 28) score++;
+      const patchW=Math.round(w*.07),patchH=Math.round(w*.078);
+      const scoreRegion=(x0:number,y0:number,x1:number,y1:number):number=>{
+        let best=0;
+        const left=Math.floor(x0*w),right=Math.ceil(x1*w);
+        const top=Math.floor(y0*h),bottom=Math.ceil(y1*h);
+        for(let py=top;py+patchH<=bottom;py+=4){
+          for(let px=left;px+patchW<=right;px+=4){
+            let ink=0,horizontal=0,vertical=0;
+            for(let y=py;y<py+patchH;y++){
+              for(let x=px;x<px+patchW;x++){
+                const i=y*w+x,v=dark[i];
+                ink+=v;
+                if(x>px && v!==dark[i-1])horizontal++;
+                if(y>py && v!==dark[i-w])vertical++;
+              }
+            }
+            const density=ink/(patchW*patchH);
+            if(density<.12||density>.82)continue;
+            best=Math.max(best,Math.min(
+              horizontal/(patchH*(patchW-1)),
+              vertical/((patchH-1)*patchW)));
           }
         }
-        scores.push(score);
-      }
-      const ranking = scores.map((score,corner)=>({score,corner}))
-        .sort((a,b)=>b.score-a.score);
-      // Don't rotate on a small or ambiguous signal; any red scribbles on a
-      // corner can also create high-frequency features.
-      if (ranking[0].score >= 65 && ranking[0].score >= 2.0 * Math.max(1,ranking[1].score)) {
-        angle = rotateForCorner(ranking[0].corner);
-        reliable = true;
+        return best;
+      };
+      // Printed KORA A3 template: QR bottom-left when correctly oriented.
+      // A top-right QR means exactly a 180-degree page rotation.
+      if(source.height>source.width){
+        const topRight=scoreRegion(.78,.075,.96,.26);
+        const bottomLeft=scoreRegion(.04,.74,.24,.95);
+        if(topRight>.105 && topRight>1.4*bottomLeft){
+          angle=180;reliable=true;
+        }else if(bottomLeft>.105 && bottomLeft>1.4*topRight){
+          angle=0;reliable=true;
+        }
       }
     }
     if (angle === 0) return {canvas:source,angle,reliable};
