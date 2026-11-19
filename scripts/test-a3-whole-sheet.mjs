@@ -43,7 +43,7 @@ assert.equal(atlas.height,1024);
 assert.equal(drawCalls.length,1,'Exactly one whole-sheet drawImage, no panel cutting');
 assert.equal(drawCalls[0][0],paper,'Must draw the full original sheet');
 assert.deepEqual(fills[0],[0,0,1024,1024],'Opaque white square background');
-const [,,dx,dy,dw,dh]=drawCalls[0];
+const [,dx,dy,dw,dh]=drawCalls[0];
 assert.ok(Number.isFinite(dx)&&Number.isFinite(dy));
 assert.ok(dw>0 && dh>0);
 const map=(x,y)=>[dx+x*dw/paper.width,dy+y*dh/paper.height];
