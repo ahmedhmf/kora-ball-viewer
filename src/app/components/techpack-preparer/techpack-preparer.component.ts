@@ -45,6 +45,11 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" [disabled]="busy()" (click)="prepareOneToOne()">
               {{readyToApplyAsIs() ? 'Use square texture as-is' : 'Prepare 1:1 texture'}}
             </button>
+            @if (!readyToApplyAsIs()) {
+              <button type="button" [disabled]="busy()" (click)="prepareBallTexture('one-to-one')">
+                Auto-orient and prepare 1:1
+              </button>
+            }
             <p class="helper">Keeps the printed panel proportions by default, without stretching individual faces. Uncheck to compare with the earlier precise seam-fit texture.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
@@ -100,6 +105,7 @@ export class TechpackPreparerComponent {
   private ready: HTMLCanvasElement | null = null;
   private preparedSource: HTMLCanvasElement | null = null;
   private manualRotation = false;
+  private preparedWithPerspective = false;
 
   readyToApplyAsIs(): boolean {
     return this.original?.width === 1024 && this.original.height === 1024;
@@ -172,8 +178,9 @@ export class TechpackPreparerComponent {
   }
 
   /** Straighten the complete A3 photo, orient the whole page, and safely extract its net. */
-  async prepareBallTexture(): Promise<void> {
+  async prepareBallTexture(mode: 'standard' | 'one-to-one' = 'standard'): Promise<void> {
     if (!this.original || this.busy()) return;
+    const oneToOne = mode === 'one-to-one';
     this.busy.set(true);
     this.prepared.set(false);
     this.ready = null;
@@ -239,11 +246,14 @@ export class TechpackPreparerComponent {
       }
       const panels=(useRotated ? second : first)?.panels;
       if(!panels)throw new Error('Cannot obtain the registered 32-panel template.');
-      this.status.set(this.preserveOriginalSizes()
+      this.status.set(oneToOne ? 'Preparing the 1:1 texture...' : this.preserveOriginalSizes()
         ? 'Preserving original printed panel sizes in the OBJ UV atlas...'
         : 'Applying the previous fine-fit UV alignment...');
       await new Promise<void>(resolve=>setTimeout(resolve,0));
-      const atlas=this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes());
+      const atlas = oneToOne
+        ? this.uvAligner.renderContinuous(corrected, panels, true, true)
+        : this.uvAligner.renderContinuous(corrected, panels, this.preserveOriginalSizes());
+      this.preparedWithPerspective = oneToOne;
       this.preparedSource=corrected;
       this.ready = atlas;
       this.prepared.set(true);
@@ -333,7 +343,9 @@ export class TechpackPreparerComponent {
     try {
       const rotated=this.rotatePage180(this.preparedSource);
       const panels=await this.panelCutout.registerPanels(rotated);
-      const atlas=this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes());
+      const atlas = this.preparedWithPerspective
+        ? this.uvAligner.renderContinuous(rotated, panels, true, true)
+        : this.uvAligner.renderContinuous(rotated, panels, this.preserveOriginalSizes());
       this.preparedSource=rotated;
       this.ready=atlas;
       this.showCanvas(atlas);
