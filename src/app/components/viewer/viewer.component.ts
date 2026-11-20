@@ -1,6 +1,6 @@
 import { Component, ElementRef, ViewChild, AfterViewInit, inject, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { BabylonEngineService } from '../../services/babylon-engine.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 import { AuthService } from '../../services/auth.service';
@@ -27,6 +27,7 @@ export class ViewerComponent implements AfterViewInit {
   readonly authService = inject(AuthService);
   private babylonEngine = inject(BabylonEngineService);
   private modelLoader = inject(ModelLoaderService);
+  private readonly router = inject(Router);
 
   isCanvasDragOver = false;
   private dragCounter = 0;
@@ -48,6 +49,21 @@ export class ViewerComponent implements AfterViewInit {
   @HostListener('window:drop', ['$event'])
   onWindowDrop(event: DragEvent): void {
     event.preventDefault();
+  }
+
+  async onBallPdfSelected(input: HTMLInputElement): Promise<void> {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      this.store.setStatus('Please select a PDF.');
+      return;
+    }
+    try {
+      await this.router.navigate(['/prepare-design'], { info: file });
+    } catch (error) {
+      this.store.setStatus('Could not open PDF preparation: ' + String(error));
+    }
   }
 
   async onModelDropped(file: File): Promise<void> {

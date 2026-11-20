@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, afterNextRender, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
@@ -122,11 +122,29 @@ export class TechpackPreparerComponent {
   readonly fileName = signal('');
   readonly status = signal('Upload an original KORA print or photo to begin.');
 
+  constructor() {
+    const upload = this.router.currentNavigation()?.extras.info;
+    if (upload instanceof File) {
+      afterNextRender(() => void this.prepareAndApplyPdf(upload));
+    }
+  }
+
+  private async prepareAndApplyPdf(file: File): Promise<void> {
+    await this.loadSource(file);
+    if (!this.hasImage()) return;
+    await this.prepareBallTexture('one-to-one');
+    if (this.prepared()) await this.applyToBall();
+  }
+
   async loadFile(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || this.busy()) return;
+    if (file) await this.loadSource(file);
+  }
+
+  private async loadSource(file: File): Promise<void> {
+    if (this.busy()) return;
 
     this.busy.set(true);
     this.hasImage.set(false);

@@ -90,9 +90,13 @@
   <aside class="ui-sidebar">
     <div class="sidebar-section">
       <h2 class="section-title">STRAIGHTEN WHATSAPP PDF / PHOTO</h2>
-      <a routerLink="/prepare-design" style="display:block;padding:12px;border:1px solid #b91c1c;border-radius:6px;color:white;text-decoration:none;background:#7f1d1d;text-align:center;font-weight:700;">
-        Upload page, straighten &amp; apply to ball
-      </a>
+      <input #ballPdfInput type="file" accept=".pdf,application/pdf" hidden
+        (change)="onBallPdfSelected(ballPdfInput)" />
+      <button type="button" (click)="ballPdfInput.click()"
+        style="display:block;width:100%;padding:12px;border:1px solid #b91c1c;border-radius:6px;color:white;background:#7f1d1d;text-align:center;font-weight:700;cursor:pointer;">
+        Upload PDF &amp; apply to ball
+      </button>
+      <a routerLink="/prepare-design">Manual texture preparation</a>
     </div>
     <div class="sidebar-section">
       <h2 class="section-title">1. LOAD 3D BALL STRUCTURE</h2>
