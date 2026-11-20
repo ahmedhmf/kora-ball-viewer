@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const metadata=readFileSync('src/app/services/kora-uv-panel-corners.ts','utf8');
+const match=metadata.match(/export const KORA_UV_PANEL_CORNERS: number\[\]\[\]\[\] = (\[[\s\S]*?\]);/);
+assert.ok(match,'OBJ UV metadata');
+const targets=JSON.parse(match[1]);
+const source=readFileSync('src/app/services/kora-panel-cutout.service.ts','utf8');
+const ref=source.match(/private readonly polygons: number\[\]\[\]\[\] = (\[[\s\S]*?\]);/);
+assert.ok(ref,'Reference panel polygons');
+const panels=JSON.parse(ref[1]);
+assert.equal(targets.length,32);
+assert.equal(panels.length,32);
+assert.equal(targets.filter(p=>p.length===5).length,12);
+assert.equal(targets.filter(p=>p.length===6).length,20);
+let error=0;
+for(let i=0;i<32;i++){
+  const src=panels[i],uv=targets[i];
+  assert.equal(src.length,uv.length,'Panel shape '+i);
+  assert.ok(uv.every(([x,y])=>x>=0&&y>=0&&x<=1024&&y<=1024));
+  const center=p=>[p.reduce((s,v)=>s+v[0],0)/p.length,p.reduce((s,v)=>s+v[1],0)/p.length];
+  const a=center(src),b=center(uv);
+  const d=Math.hypot(b[0]-(a[0]*1.09+116),b[1]-(a[1]*1.10-53));
+  assert.ok(d<12,'Wrong OBJ UV island for panel '+(i+1));
+  error=Math.max(error,d);
+}
+const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
+assert.ok(component.includes('PREPARE BALL TEXTURE'));
+assert.ok(component.includes('const panels=await this.panelCutout.registerPanels(corrected)'));
+assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'));
+assert.ok(component.includes('const panels=await this.panelCutout.registerPanels(rotated)'));
+assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes())'));
+const prepareStart=component.indexOf('async prepareBallTexture()');
+const flipStart=component.indexOf('async flipWholeSheet()');
+const registerAt=component.indexOf('this.panelCutout.registerPanels(corrected)',prepareStart);
+const renderAt=component.indexOf('this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())',prepareStart);
+const rotateRegisterAt=component.indexOf('this.panelCutout.registerPanels(rotated)',flipStart);
+const rotateRenderAt=component.indexOf('this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes())',flipStart);
+assert.ok(prepareStart>=0 && registerAt>prepareStart && renderAt>registerAt && renderAt<flipStart,
+  'The one-click flow must register the original corrected image before rendering its OBJ UV islands');
+assert.ok(flipStart>=0 && rotateRegisterAt>flipStart && rotateRenderAt>rotateRegisterAt,
+  '180° correction must re-register the rotated original before UV mapping');
+assert.ok(source.includes('getRegistrationScore(source: HTMLCanvasElement)'),
+  'Expose geometric registration quality to compare A3 orientations');
+assert.ok(component.includes('const rotated=this.rotatePage180(corrected)'));
+assert.ok(component.includes('this.panelCutout.getRegistrationScore(corrected)'));
+assert.ok(component.includes('this.panelCutout.getRegistrationScore(rotated)'));
+assert.ok(component.includes('second.score + minimumImprovement < first.score'),
+  'Select whole-page rotation from fit evidence instead of guessing from the QR');
+assert.ok(component.includes('const panels=(useRotated ? second : first)?.panels'),
+  'Render the polygons belonging to the chosen source orientation');
+assert.ok(!component.includes('this.scanNet.render('),
+  'The centered thumbnail is not an OBJ UV texture');
+assert.ok(source.includes('getRegisteredPanels(source: HTMLCanvasElement)'));
+assert.ok(source.includes("if (mode === 'register') return source;"));
+assert.ok(!source.includes('refineKoraPanelCorners'), 'Unsafe per-edge snapping must not return');
+const renderer=readFileSync('src/app/services/kora-uv-align.service.ts','utf8');
+assert.ok(renderer.includes('Math.min(3 * sw / 725, 3 * sh / 1024)'), 'Legacy renderer remains available');
+assert.ok(component.includes('this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'), 'Use matching OBJ UV islands');
+assert.ok(!component.includes('this.uvAligner.render(corrected,panels)'), 'Never cut the source into individual polygons');
+assert.ok(component.includes('readonly preserveOriginalSizes = signal(true)'), 'Original panel proportions are the default');
+assert.ok(component.includes('Preserve original panel sizes (recommended)'));
+assert.ok(renderer.includes('if(preserveOriginalSizes)'));
+assert.ok(renderer.includes('const uniformCos=dot/denominator'));
+assert.ok(renderer.includes('if(!preserveOriginalSizes) {'), 'Local distortion must be opt-in');
+assert.ok(renderer.includes('renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][], preserveOriginalSizes = true)'));
+assert.ok(renderer.includes('actx.setTransform(a,c,b,d,tx,ty)'));
+assert.ok(renderer.includes('maskCtx.lineWidth=24'));
+
+assert.ok(source.includes('registerPanels(source: HTMLCanvasElement)'), 'Register panels before sampling');
+console.log('32 UV islands registered (12 pentagons and 20 hexagons); max center error '+error.toFixed(2)+'px.');

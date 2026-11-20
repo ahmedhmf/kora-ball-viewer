@@ -9,7 +9,16 @@
     "start": "node scripts/set-env.js && ng serve",
     "build": "node scripts/set-env.js && ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "test:paper": "node scripts/test-paper-perspective.mjs",
+    "test:panel-cutout": "node scripts/test-panel-cutout.mjs",
+    "test:uv-alignment": "node scripts/test-uv-alignment.mjs",
+    "test:uv-raster": "node scripts/test-uv-raster.mjs",
+    "test:a3-whole-sheet": "node scripts/test-a3-whole-sheet.mjs",
+    "test:scan-net": "node scripts/test-scan-net.mjs",
+    "test:qr-a3": "node scripts/test-qr-a3.mjs",
+    "test:photographed-pdf": "node scripts/test-photographed-pdf.mjs",
+    "test:uv-continuous": "node scripts/test-uv-continuous.mjs"
   },
   "private": true,
   "packageManager": "npm@11.13.0",

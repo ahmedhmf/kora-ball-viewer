@@ -1,0 +1,38 @@
+name: KORA UV alignment regression
+on:
+  push:
+    branches:
+      - feature/browser-scan-normalizer
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Paper perspective test
+        run: npm run test:paper
+      - name: Cutout and white atlas regression
+        run: npm run test:panel-cutout
+      - name: Photographed A3 PDF detection
+        run: npm run test:photographed-pdf
+      - name: Whole A3 1:1 atlas regression
+        run: npm run test:a3-whole-sheet
+      - name: Scan-derived 32-panel extraction
+        run: npm run test:scan-net
+      - name: Grey A3 QR orientation
+        run: npm run test:qr-a3
+      - name: UV topology and placement
+        run: npm run test:uv-alignment
+      - name: UV raster regression
+        run: npm run test:uv-raster
+      - name: Continuous original artwork to OBJ UV atlas
+        run: npm run test:uv-continuous
+      - name: Production build
+        run: npm run build
