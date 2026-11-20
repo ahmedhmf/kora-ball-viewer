@@ -81,10 +81,10 @@ assert.ok(output.ops.some(op=>op[0]==='drawImage'&&op[1]===artwork),
   'Overlay complete protected artwork without individual panel transforms');
 assert.throws(()=>service.placeFullSheetInBallUV(paper,[]),/32 registered panels/);
 const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
-assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(corrected,panels)'));
+assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'));
 assert.ok(component.includes('const detected=this.paper.detect(input)'));
 assert.ok(!component.includes('this.scanNet.render('));
 assert.ok(component.includes('const detected=this.paper.detect(input)'));
 assert.ok(!component.includes('if (!this.uploadedPdf)'));
-assert.ok(component.includes('this.uvAligner.renderContinuous(corrected,panels)'));
+assert.ok(component.includes('this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'));
 console.log('PASS: A3 centered, single outer-envelope mask, all 32 panel interiors untouched.');
