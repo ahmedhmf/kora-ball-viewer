@@ -84,11 +84,12 @@ export class KoraUvAlignService {
    * each source polygon destroyed handwritten strokes crossing estimated
    * panel boundaries, so the one-click workflow must NEVER call render().
    *
-   * The destination mask is made from the actual OBJ UV islands, with 12px
-   * bleed. It only removes distant paper/QR marks; no SOURCE polygon is
-   * clipped or resampled independently.
+   * Preserve-original-sizes mode applies only a uniform similarity
+   * transform, so individual printed panels retain their original proportions.
+   * The optional fine-fit mode applies the previous continuous local warp.
+   * Both modes mask only distant paper marks in DESTINATION OBJ UV space.
    */
-  renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][]): HTMLCanvasElement {
+  renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][], preserveOriginalSizes = true): HTMLCanvasElement {
     if (source.width<2 || source.height<2 || sourcePanels.length!==32 ||
       KORA_UV_PANEL_CORNERS.length!==32)
       throw new Error('Expected an A3 page registered to 32 OBJ panels.');
@@ -134,7 +135,33 @@ export class KoraUvAlignService {
       }
       return a.map(row=>row[3]);
     };
-    const [a,b,tx]=solve(bu), [c,d,ty]=solve(bv);
+    let [a,b,tx]=solve(bu), [c,d,ty]=solve(bv);
+
+    if(preserveOriginalSizes) {
+      // Fit ONE similarity transform: same scale in both directions and no
+      // skew. This preserves every printed panel's original proportions,
+      // rather than forcing each face to exactly fill a slightly different
+      // OBJ UV polygon. The mesh itself is never resized.
+      let sx=0,sy=0,ux=0,uy=0;
+      for(const p of samples){sx+=p.x;sy+=p.y;ux+=p.u;uy+=p.v;}
+      sx/=samples.length;sy/=samples.length;
+      ux/=samples.length;uy/=samples.length;
+      let dot=0,cross=0,denominator=0;
+      for(const p of samples){
+        const x=p.x-sx,y=p.y-sy,u=p.u-ux,v=p.v-uy;
+        dot+=x*u+y*v;
+        cross+=x*v-y*u;
+        denominator+=x*x+y*y;
+      }
+      if(denominator<1e-9)throw new Error('Degenerate original panel dimensions');
+      const uniformCos=dot/denominator;
+      const uniformSin=cross/denominator;
+      a=uniformCos;b=-uniformSin;
+      c=uniformSin;d=uniformCos;
+      tx=ux-a*sx-b*sy;
+      ty=uy-c*sx-d*sy;
+    }
+
     if(![a,b,c,d,tx,ty].every(Number.isFinite) || a*d-b*c<=0)
       throw new Error('Mirrored or invalid A3-to-OBJ UV registration.');
 
@@ -148,74 +175,77 @@ export class KoraUvAlignService {
     actx.drawImage(source,0,0);
     actx.restore();
 
-    // A single affine transform gets the net close, but leaves a few
-    // millimetres of mismatch at individual panel seams. Smoothly correct
-    // the residuals of ALL 180 corresponding corners in destination space.
-    // This is one continuous displacement field, never 32 source cutouts.
-    // In particular, a handwritten letter crossing a border remains whole.
-    const controls=samples.map(p=>({
-      u:p.u,v:p.v,
-      dx:a*p.x+b*p.y+tx-p.u,
-      dy:c*p.x+d*p.y+ty-p.v
-    }));
-    const gridStep=4,gridSize=size/gridStep+1;
-    const gridX=new Float32Array(gridSize*gridSize);
-    const gridY=new Float32Array(gridSize*gridSize);
-    const radiusSquared=96*96,softeningSquared=4*4;
-    for(let gy=0;gy<gridSize;gy++){
-      for(let gx=0;gx<gridSize;gx++){
-        const u=gx*gridStep,v=gy*gridStep;
-        let sum=0,weightedX=0,weightedY=0;
-        for(const p of controls){
-          const distanceSquared=(u-p.u)**2+(v-p.v)**2;
-          if(distanceSquared>radiusSquared)continue;
-          // Compact, smoothly vanishing influence prevents one panel's
-          // correction from pulling distant artwork. The softening avoids
-          // singularities where neighboring island corners nearly coincide.
-          const falloff=1-distanceSquared/radiusSquared;
-          const weight=falloff*falloff/(distanceSquared+softeningSquared);
-          sum+=weight;
-          weightedX+=weight*p.dx;
-          weightedY+=weight*p.dy;
+    if(!preserveOriginalSizes) {
+      // A single affine transform gets the net close, but leaves a few
+      // millimetres of mismatch at individual panel seams. Smoothly correct
+      // the residuals of ALL 180 corresponding corners in destination space.
+      // This is one continuous displacement field, never 32 source cutouts.
+      // In particular, a handwritten letter crossing a border remains whole.
+      const controls=samples.map(p=>({
+        u:p.u,v:p.v,
+        dx:a*p.x+b*p.y+tx-p.u,
+        dy:c*p.x+d*p.y+ty-p.v
+      }));
+      const gridStep=4,gridSize=size/gridStep+1;
+      const gridX=new Float32Array(gridSize*gridSize);
+      const gridY=new Float32Array(gridSize*gridSize);
+      const radiusSquared=96*96,softeningSquared=4*4;
+      for(let gy=0;gy<gridSize;gy++){
+        for(let gx=0;gx<gridSize;gx++){
+          const u=gx*gridStep,v=gy*gridStep;
+          let sum=0,weightedX=0,weightedY=0;
+          for(const p of controls){
+            const distanceSquared=(u-p.u)**2+(v-p.v)**2;
+            if(distanceSquared>radiusSquared)continue;
+            // Compact, smoothly vanishing influence prevents one panel's
+            // correction from pulling distant artwork. The softening avoids
+            // singularities where neighboring island corners nearly coincide.
+            const falloff=1-distanceSquared/radiusSquared;
+            const weight=falloff*falloff/(distanceSquared+softeningSquared);
+            sum+=weight;
+            weightedX+=weight*p.dx;
+            weightedY+=weight*p.dy;
+          }
+          const index=gy*gridSize+gx;
+          gridX[index]=sum?weightedX/sum:0;
+          gridY[index]=sum?weightedY/sum:0;
         }
-        const index=gy*gridSize+gx;
-        gridX[index]=sum?weightedX/sum:0;
-        gridY[index]=sum?weightedY/sum:0;
       }
-    }
 
-    const original=actx.getImageData(0,0,size,size).data;
-    const remapped=new Uint8ClampedArray(original.length);
-    for(let y=0;y<size;y++){
-      const gy=Math.floor(y/gridStep), fy=(y%gridStep)/gridStep;
-      for(let x=0;x<size;x++){
-        const gx=Math.floor(x/gridStep), fx=(x%gridStep)/gridStep;
-        const i=gy*gridSize+gx;
-        const w00=(1-fx)*(1-fy),w10=fx*(1-fy);
-        const w01=(1-fx)*fy,w11=fx*fy;
-        // The base canvas contains artwork placed by the original affine.
-        // To sample a registered source corner at its exact OBJ UV corner,
-        // read from affine(sourceCorner) rather than UV(sourceCorner).
-        const offsetX=gridX[i]*w00+gridX[i+1]*w10+
-          gridX[i+gridSize]*w01+gridX[i+gridSize+1]*w11;
-        const offsetY=gridY[i]*w00+gridY[i+1]*w10+
-          gridY[i+gridSize]*w01+gridY[i+gridSize+1]*w11;
-        const sx=Math.max(0,Math.min(size-1.001,x+offsetX));
-        const sy=Math.max(0,Math.min(size-1.001,y+offsetY));
-        const ix=Math.floor(sx),iy=Math.floor(sy);
-        const wx=sx-ix,wy=sy-iy;
-        const p=(iy*size+ix)*4,below=p+size*4,dst=(y*size+x)*4;
-        for(let channel=0;channel<4;channel++){
-          remapped[dst+channel]=Math.round(
-            original[p+channel]*(1-wx)*(1-wy)+
-            original[p+4+channel]*wx*(1-wy)+
-            original[below+channel]*(1-wx)*wy+
-            original[below+4+channel]*wx*wy
-          );
+      const original=actx.getImageData(0,0,size,size).data;
+      const remapped=new Uint8ClampedArray(original.length);
+      for(let y=0;y<size;y++){
+        const gy=Math.floor(y/gridStep), fy=(y%gridStep)/gridStep;
+        for(let x=0;x<size;x++){
+          const gx=Math.floor(x/gridStep), fx=(x%gridStep)/gridStep;
+          const i=gy*gridSize+gx;
+          const w00=(1-fx)*(1-fy),w10=fx*(1-fy);
+          const w01=(1-fx)*fy,w11=fx*fy;
+          // The base canvas contains artwork placed by the original affine.
+          // To sample a registered source corner at its exact OBJ UV corner,
+          // read from affine(sourceCorner) rather than UV(sourceCorner).
+          const offsetX=gridX[i]*w00+gridX[i+1]*w10+
+            gridX[i+gridSize]*w01+gridX[i+gridSize+1]*w11;
+          const offsetY=gridY[i]*w00+gridY[i+1]*w10+
+            gridY[i+gridSize]*w01+gridY[i+gridSize+1]*w11;
+          const sx=Math.max(0,Math.min(size-1.001,x+offsetX));
+          const sy=Math.max(0,Math.min(size-1.001,y+offsetY));
+          const ix=Math.floor(sx),iy=Math.floor(sy);
+          const wx=sx-ix,wy=sy-iy;
+          const p=(iy*size+ix)*4,below=p+size*4,dst=(y*size+x)*4;
+          for(let channel=0;channel<4;channel++){
+            remapped[dst+channel]=Math.round(
+              original[p+channel]*(1-wx)*(1-wy)+
+              original[p+4+channel]*wx*(1-wy)+
+              original[below+channel]*(1-wx)*wy+
+              original[below+4+channel]*wx*wy
+            );
+          }
         }
       }
+      actx.putImageData(new ImageData(remapped,size,size),0,0);
+
     }
-    actx.putImageData(new ImageData(remapped,size,size),0,0);
 
     // Clip only in DESTINATION OBJ UV space. No printed-source edge is cut.
     // A 12px protective bleed catches modest residual print-line deviations
