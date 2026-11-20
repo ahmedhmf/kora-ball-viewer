@@ -89,7 +89,7 @@ export class KoraUvAlignService {
    * The optional fine-fit mode applies the previous continuous local warp.
    * Both modes mask only distant paper marks in DESTINATION OBJ UV space.
    */
-  renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][], preserveOriginalSizes = true): HTMLCanvasElement {
+  renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][], preserveOriginalSizes = true, correctPerspective = false): HTMLCanvasElement {
     if (source.width<2 || source.height<2 || sourcePanels.length!==32 ||
       KORA_UV_PANEL_CORNERS.length!==32)
       throw new Error('Expected an A3 page registered to 32 OBJ panels.');
@@ -174,6 +174,8 @@ export class KoraUvAlignService {
     actx.setTransform(a,c,b,d,tx,ty);
     actx.drawImage(source,0,0);
     actx.restore();
+
+    if (correctPerspective && preserveOriginalSizes) this.correctSheetPerspective(actx);
 
     if(!preserveOriginalSizes) {
       // A single affine transform gets the net close, but leaves a few
@@ -281,6 +283,147 @@ export class KoraUvAlignService {
     ctx.fillRect(0,0,size,size);
     ctx.drawImage(art,0,0);
     return result;
+  }
+
+  /** Fit the printed outline as one projective transform in atlas space. */
+  private correctSheetPerspective(context: CanvasRenderingContext2D): void {
+    const size = this.size;
+    const half = size / 2;
+    const image = context.getImageData(0, 0, size, size);
+    const pixels = image.data;
+    const observations: { row: number[]; offset: number; y: number }[] = [];
+
+    const gray = (x: number, y: number): number => {
+      const px = Math.round(x), py = Math.round(y);
+      if (px < 0 || py < 0 || px >= size || py >= size) return 255;
+      const index = (py * size + px) * 4;
+      if (pixels[index + 3] < 250) return 255;
+      const r = pixels[index], g = pixels[index + 1], b = pixels[index + 2];
+      return Math.max(r, g, b) - Math.min(r, g, b) > 20 ? 255 : (r + g + b) / 3;
+    };
+
+    for (const panel of KORA_UV_PANEL_CORNERS) {
+      for (let i = 0; i < panel.length; i++) {
+        const [ax, ay] = panel[i];
+        const [bx, by] = panel[(i + 1) % panel.length];
+        const length = Math.hypot(bx - ax, by - ay);
+        const nx = (by - ay) / length, ny = (ax - bx) / length;
+        const x = (ax + bx) / 2, y = (ay + by) / 2;
+        // Use the outside edges. Interior print lines are shared by two UV
+        // islands and can correspond to both sides of a narrow atlas gutter.
+        if (KORA_UV_PANEL_CORNERS.some(poly => this.inside(x + nx * 14, y + ny * 14, poly))) continue;
+        if (x < 20 || y < 20 || x > size - 20 || y > size - 20) continue;
+
+        let bestOffset = 0;
+        let bestScore = 0;
+        for (let offset = -18; offset <= 18; offset++) {
+          let score = 0;
+          let support = 0;
+          for (let k = -10; k <= 10; k++) {
+            const px = x + (bx - ax) * k / 30 + nx * offset;
+            const py = y + (by - ay) * k / 30 + ny * offset;
+            const center = gray(px, py);
+            const a = gray(px - nx * 2.5, py - ny * 2.5);
+            const b = gray(px + nx * 2.5, py + ny * 2.5);
+            const contrast = Math.min(a, b) - center;
+            if (center >= 95 && a > 225 && b > 225 && contrast >= 8) {
+              score += Math.min(contrast, 32);
+              support++;
+            }
+          }
+          if (support >= 7 && score > bestScore) {
+            bestOffset = offset;
+            bestScore = score;
+          }
+        }
+        if (!bestScore) continue;
+
+        // The detected line determines motion perpendicular to the edge.
+        // Normalize coordinates so the eight-parameter fit is well scaled.
+        const u = (x - half) / half, v = (y - half) / half;
+        const offset = bestOffset / half;
+        const position = nx * u + ny * v + offset;
+        observations.push({
+          row: [nx * u, nx * v, nx, ny * u, ny * v, ny, -position * u, -position * v],
+          offset,
+          y
+        });
+      }
+    }
+
+    if (observations.length < 16 || [0, 1, 2].some(third =>
+      observations.filter(p => Math.floor(p.y * 3 / size) === third).length < 3)) return;
+
+    const count = 8;
+    let weights = observations.map(() => 1);
+    let fit = Array<number>(count).fill(0);
+    for (let iteration = 0; iteration < 4; iteration++) {
+      const matrix = Array.from({ length: count }, () => Array<number>(count + 1).fill(0));
+      observations.forEach(({row, offset}, n) => {
+        for (let i = 0; i < count; i++) {
+          const w = row[i] * weights[n];
+          for (let j = 0; j < count; j++) matrix[i][j] += w * row[j];
+          matrix[i][count] += w * offset;
+        }
+      });
+      for (let i = 0; i < count; i++) {
+        let pivot = i;
+        for (let j = i + 1; j < count; j++) {
+          if (Math.abs(matrix[j][i]) > Math.abs(matrix[pivot][i])) pivot = j;
+        }
+        if (Math.abs(matrix[pivot][i]) < 1e-8) return;
+        [matrix[i], matrix[pivot]] = [matrix[pivot], matrix[i]];
+        const scale = matrix[i][i];
+        for (let j = i; j <= count; j++) matrix[i][j] /= scale;
+        for (let n = 0; n < count; n++) {
+          if (n === i) continue;
+          const scale = matrix[n][i];
+          for (let j = i; j <= count; j++) matrix[n][j] -= scale * matrix[i][j];
+        }
+      }
+      fit = matrix.map(row => row[count]);
+      weights = observations.map(({row, offset}) => {
+        const residual = Math.abs(row.reduce((sum, value, i) => sum + value * fit[i], 0) - offset) * half;
+        return Math.min(1, 2.5 / Math.max(residual, 0.01));
+      });
+    }
+    const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
+    const before = median(observations.map(({offset}) => Math.abs(offset) * half));
+    const after = median(observations.map(({row, offset}) =>
+      Math.abs(row.reduce((sum, value, i) => sum + value * fit[i], 0) - offset) * half));
+    if (before - after < 1 || after > 3) return;
+
+    const [a, b, c, d, e, f, g, h] = fit;
+    if (Math.abs(g) + Math.abs(h) > 0.08) return;
+    const project = (x: number, y: number): [number, number] => {
+      const divisor = 1 + g * x + h * y;
+      return [(x + a*x + b*y + c) / divisor, (y + d*x + e*y + f) / divisor];
+    };
+    for (const x of [-1, 1]) {
+      for (const y of [-1, 1]) {
+        const [sx, sy] = project(x, y);
+        if (Math.hypot(sx - x, sy - y) * half > 44) return;
+      }
+    }
+
+    const corrected = context.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const [u, v] = project((x - half) / half, (y - half) / half);
+        const sx = u * half + half, sy = v * half + half;
+        const ix = Math.floor(sx), iy = Math.floor(sy);
+        if (ix < 0 || iy < 0 || ix >= size - 1 || iy >= size - 1) continue;
+        const wx = sx - ix, wy = sy - iy;
+        const p = (iy * size + ix) * 4, q = p + size * 4;
+        const dst = (y * size + x) * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          corrected.data[dst + channel] =
+            (pixels[p + channel] * (1 - wx) + pixels[p + 4 + channel] * wx) * (1 - wy) +
+            (pixels[q + channel] * (1 - wx) + pixels[q + 4 + channel] * wx) * wy;
+        }
+      }
+    }
+    context.putImageData(corrected, 0, 0);
   }
 
   render(source: HTMLCanvasElement, sourcePanels: number[][][]): HTMLCanvasElement {

@@ -312,7 +312,7 @@ export class TechpackPreparerComponent {
       let texture = source;
       if (!this.readyToApplyAsIs()) {
         const panels = await this.panelCutout.registerPanels(source);
-        texture = this.uvAligner.renderContinuous(source, panels, true);
+        texture = this.uvAligner.renderContinuous(source, panels, true, true);
       }
 
       this.showCanvas(texture);
