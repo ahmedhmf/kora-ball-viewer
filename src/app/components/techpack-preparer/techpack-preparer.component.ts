@@ -31,10 +31,15 @@ import { ModelLoaderService } from '../../services/model-loader.service';
           </label>
           @if (hasImage()) {
             <p class="file">{{fileName()}}</p>
+            <label class="size-option">
+              <input type="checkbox" [checked]="preserveOriginalSizes()" [disabled]="busy()"
+                (change)="preserveOriginalSizes.set($any($event.target).checked)" />
+              Preserve original panel sizes (recommended)
+            </label>
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
-            <p class="helper">Straightens the A3 scan, registers all 32 panels, and transfers the complete uncut artwork to the actual 32-CLB.obj UV layout.</p>
+            <p class="helper">Keeps the printed panel proportions by default, without stretching individual faces. Uncheck to compare with the earlier precise seam-fit texture.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
@@ -65,6 +70,8 @@ import { ModelLoaderService } from '../../services/model-loader.service';
     button:disabled{opacity:.5;cursor:not-allowed}
     .prepare{background:#b91c1c;border-color:#b91c1c;font-weight:700}
     .status{color:#e5e7eb;font-weight:600;overflow-wrap:anywhere}
+    .size-option{display:flex;align-items:center;gap:8px;font-weight:500;line-height:1.4}
+    .size-option input{width:16px;height:16px;flex:none}
     .file{overflow-wrap:anywhere}.helper{color:#fcd34d}
     .preview{display:flex;flex-direction:column;align-items:center;min-width:0;max-height:87vh;overflow:auto}
     .preview h3{align-self:flex-start}
@@ -87,6 +94,7 @@ export class TechpackPreparerComponent {
   readonly hasImage = signal(false);
   readonly prepared = signal(false);
   readonly busy = signal(false);
+  readonly preserveOriginalSizes = signal(true);
   readonly fileName = signal('');
   readonly status = signal('Upload an original KORA print or photo to begin.');
 
@@ -211,9 +219,11 @@ export class TechpackPreparerComponent {
       }
       const panels=(useRotated ? second : first)?.panels;
       if(!panels)throw new Error('Cannot obtain the registered 32-panel template.');
-      this.status.set('Mapping the complete A3 artwork continuously into the OBJ UV islands...');
+      this.status.set(this.preserveOriginalSizes()
+        ? 'Preserving original printed panel sizes in the OBJ UV atlas...'
+        : 'Applying the previous fine-fit UV alignment...');
       await new Promise<void>(resolve=>setTimeout(resolve,0));
-      const atlas=this.uvAligner.renderContinuous(corrected,panels);
+      const atlas=this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes());
       this.preparedSource=corrected;
       this.ready = atlas;
       this.prepared.set(true);
@@ -256,7 +266,7 @@ export class TechpackPreparerComponent {
     try {
       const rotated=this.rotatePage180(this.preparedSource);
       const panels=await this.panelCutout.registerPanels(rotated);
-      const atlas=this.uvAligner.renderContinuous(rotated,panels);
+      const atlas=this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes());
       this.preparedSource=rotated;
       this.ready=atlas;
       this.showCanvas(atlas);
