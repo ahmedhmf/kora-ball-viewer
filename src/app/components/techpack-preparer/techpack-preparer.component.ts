@@ -39,11 +39,19 @@ import { ModelLoaderService } from '../../services/model-loader.service';
             <button type="button" class="prepare" [disabled]="busy()" (click)="prepareBallTexture()">
               {{busy() ? 'PREPARING...' : 'PREPARE BALL TEXTURE'}}
             </button>
+            <button type="button" [disabled]="busy()" (click)="rotateManualSource()">
+              Rotate source 180°
+            </button>
+            <button type="button" [disabled]="busy()" (click)="prepareOneToOne()">
+              {{readyToApplyAsIs() ? 'Use square texture as-is' : 'Prepare 1:1 texture'}}
+            </button>
             <p class="helper">Keeps the printed panel proportions by default, without stretching individual faces. Uncheck to compare with the earlier precise seam-fit texture.</p>
           }
           <p class="status" role="status" aria-live="polite">{{status()}}</p>
           @if (prepared()) {
-            <button type="button" [disabled]="busy()" (click)="flipWholeSheet()">Rotate entire design 180°</button>
+            @if (canFlipPreparedSheet()) {
+              <button type="button" [disabled]="busy()" (click)="flipWholeSheet()">Rotate entire design 180°</button>
+            }
             <button type="button" [disabled]="busy()" (click)="download()">Download ready PNG</button>
             <button type="button" [disabled]="busy()" (click)="applyToBall()">Apply to 3D Ball</button>
           }
@@ -91,6 +99,16 @@ export class TechpackPreparerComponent {
   private original: HTMLCanvasElement | null = null;
   private ready: HTMLCanvasElement | null = null;
   private preparedSource: HTMLCanvasElement | null = null;
+  private manualRotation = false;
+
+  readyToApplyAsIs(): boolean {
+    return this.original?.width === 1024 && this.original.height === 1024;
+  }
+
+  canFlipPreparedSheet(): boolean {
+    return this.preparedSource !== null;
+  }
+
   readonly hasImage = signal(false);
   readonly prepared = signal(false);
   readonly busy = signal(false);
@@ -108,6 +126,7 @@ export class TechpackPreparerComponent {
     this.hasImage.set(false);
     this.prepared.set(false);
     this.original = null;
+    this.manualRotation = false;
     this.ready = null;
     this.preparedSource = null;
     this.status.set('Reading original page...');
@@ -158,6 +177,7 @@ export class TechpackPreparerComponent {
     this.busy.set(true);
     this.prepared.set(false);
     this.ready = null;
+    this.preparedSource = null;
     try {
       this.status.set('Preparing the upright A3 page...');
       const input=this.original;
@@ -257,6 +277,53 @@ export class TechpackPreparerComponent {
     ctx.rotate(Math.PI);
     ctx.drawImage(source,0,0);
     return rotated;
+  }
+
+  rotateManualSource(): void {
+    if (!this.original || this.busy()) return;
+    const nextRotation = !this.manualRotation;
+    this.showCanvas(nextRotation ? this.rotatePage180(this.original) : this.original);
+    this.manualRotation = nextRotation;
+    this.ready = null;
+    this.preparedSource = null;
+    this.prepared.set(false);
+    this.status.set(nextRotation ? 'Source rotated 180°.' : 'Source rotation reset.');
+  }
+
+  async prepareOneToOne(): Promise<void> {
+    const original = this.original;
+    if (!original || this.busy()) return;
+    this.busy.set(true);
+    this.prepared.set(false);
+    this.ready = null;
+    this.preparedSource = null;
+    try {
+      let source = original;
+      if (!this.readyToApplyAsIs()) {
+        this.status.set('Preparing the 1:1 texture...');
+        const detected = this.paper.detect(source);
+        if (detected.confidence === 'detected') {
+          const corners = this.paper.corners(source, detected.topRight, detected.bottomRight);
+          source = await this.paper.straighten(source, corners);
+        }
+      }
+      if (this.manualRotation) source = this.rotatePage180(source);
+
+      let texture = source;
+      if (!this.readyToApplyAsIs()) {
+        const panels = await this.panelCutout.registerPanels(source);
+        texture = this.panelCutout.placeFullSheetInBallUV(source, panels);
+      }
+
+      this.showCanvas(texture);
+      this.ready = texture;
+      this.prepared.set(true);
+      this.status.set('Ready to apply to the 3D ball.');
+    } catch (error) {
+      this.status.set('1:1 preparation failed: ' + String(error));
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   async flipWholeSheet(): Promise<void> {
