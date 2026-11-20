@@ -1,9 +1,10 @@
-import { Component, ElementRef, ViewChild, afterNextRender, inject, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { PdfConverterService } from '../../services/pdf-converter.service';
 import { PaperStraightenerService } from '../../services/paper-straightener.service';
 import { KoraPanelCutoutService } from '../../services/kora-panel-cutout.service';
 import { KoraUvAlignService } from '../../services/kora-uv-align.service';
+import { BallTexturePreparationService } from '../../services/ball-texture-preparation.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 
 /**
@@ -100,6 +101,7 @@ export class TechpackPreparerComponent {
   private readonly uvAligner = inject(KoraUvAlignService);
   private readonly model = inject(ModelLoaderService);
   private readonly router = inject(Router);
+  private readonly preparation = inject(BallTexturePreparationService);
 
   private original: HTMLCanvasElement | null = null;
   private ready: HTMLCanvasElement | null = null;
@@ -122,20 +124,6 @@ export class TechpackPreparerComponent {
   readonly fileName = signal('');
   readonly status = signal('Upload an original KORA print or photo to begin.');
 
-  constructor() {
-    const upload = this.router.currentNavigation()?.extras.info;
-    if (upload instanceof File) {
-      afterNextRender(() => void this.prepareAndApplyPdf(upload));
-    }
-  }
-
-  private async prepareAndApplyPdf(file: File): Promise<void> {
-    await this.loadSource(file);
-    if (!this.hasImage()) return;
-    await this.prepareBallTexture('one-to-one');
-    if (this.prepared()) await this.applyToBall();
-  }
-
   async loadFile(event: Event): Promise<void> {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -157,16 +145,7 @@ export class TechpackPreparerComponent {
     try {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       if (isPdf) {
-        const pdfDocument = await this.pdf.loadPdfDocument(file);
-        try {
-          const page = await pdfDocument.getPage(1);
-          const viewport = page.getViewport({scale:1});
-          const scale = Math.min(2.4, 2400 / Math.max(viewport.width, viewport.height));
-          const rendered = await this.pdf.renderPageToCanvas(pdfDocument, 1, scale);
-          this.original = rendered.canvas;
-        } finally {
-          await pdfDocument.destroy();
-        }
+        this.original = await this.preparation.readPdf(file);
       } else if (file.type.startsWith('image/')) {
         const bitmap = await createImageBitmap(file);
         try {
@@ -204,73 +183,9 @@ export class TechpackPreparerComponent {
     this.ready = null;
     this.preparedSource = null;
     try {
-      this.status.set('Preparing the upright A3 page...');
-      const input=this.original;
-      let corrected=input;
-      // A PDF can be a scanned PHOTO (the supplied WhatsApp A3 is one).
-      // Do not skip perspective correction because the container is .pdf.
-      // The detector requires a long, consistently visible paper/table edge;
-      // when it is not detected, retain the complete unmodified source.
-      const detected=this.paper.detect(input);
-      if (detected.confidence === 'detected') {
-        this.status.set('Straightening the photographed A3 paper...');
-        const corners=this.paper.corners(input,detected.topRight,detected.bottomRight);
-        corrected=await this.paper.straighten(input,corners);
-      }
-      // Portrait paper can still be upside down. Always look for the
-      // KORA QR marker and orient the WHOLE page, before any registration
-      // or cropping. Rotating only landscape pages caused the 180° failure.
-      this.status.set('Orienting the A3 print using its QR marker...');
-      const oriented=await this.paper.orientPrintedSheet(corrected);
-      // QR detection is advisory. Faint or partially scanned QR marks should
-      // not block an otherwise usable A3 sheet. The user can flip the whole
-      // original sheet with the 180° control after preparation.
-      let orientationUncertain=!oriented.reliable;
-      corrected=oriented.canvas;
-      const ratio=corrected.width/corrected.height;
-      if (ratio < .62 || ratio > .79)
-        throw new Error('The original A3 page must be upright portrait (297 × 420 mm).');
-      this.status.set('Registering the 32 printed outlines and checking orientation...');
-
-      // QR codes can be blurred in WhatsApp scans. Independently fit the
-      // printed 32-panel template in BOTH portrait orientations. The real
-      // A3 layout should match the correctly rotated page more closely.
-      // Avoid silently choosing a QR corner based on colorful handwriting.
-      const rotated=this.rotatePage180(corrected);
-      let first: {panels:number[][][]; score:number} | null=null;
-      let second: {panels:number[][][]; score:number} | null=null;
-      try {
-        const panels=await this.panelCutout.registerPanels(corrected);
-        first={panels,score:this.panelCutout.getRegistrationScore(corrected)};
-      } catch(error) {
-        console.warn('[KORA 0-degree registration]',error);
-      }
-      try {
-        const panels=await this.panelCutout.registerPanels(rotated);
-        second={panels,score:this.panelCutout.getRegistrationScore(rotated)};
-      } catch(error) {
-        console.warn('[KORA 180-degree registration]',error);
-      }
-      if(!first && !second)
-        throw new Error('Neither A3 orientation matches the 32 printed panels. Check that the full sheet is visible.');
-      // A modest difference is enough when QR is uncertain; when the QR
-      // decoder was confident, require a stronger geometric contradiction.
-      const minimumImprovement=oriented.reliable ? 0.8 : 0.25;
-      const useRotated=!!second && (!first ||
-        second.score + minimumImprovement < first.score);
-      if(useRotated) {
-        corrected=rotated;
-        orientationUncertain=false;
-      }
-      const panels=(useRotated ? second : first)?.panels;
-      if(!panels)throw new Error('Cannot obtain the registered 32-panel template.');
-      this.status.set(oneToOne ? 'Preparing the 1:1 texture...' : this.preserveOriginalSizes()
-        ? 'Preserving original printed panel sizes in the OBJ UV atlas...'
-        : 'Applying the previous fine-fit UV alignment...');
-      await new Promise<void>(resolve=>setTimeout(resolve,0));
-      const atlas = oneToOne
-        ? this.uvAligner.renderContinuous(corrected, panels, true, true)
-        : this.uvAligner.renderContinuous(corrected, panels, this.preserveOriginalSizes());
+      const { atlas, corrected, orientationUncertain } = await this.preparation.prepare(
+        this.original, this.preserveOriginalSizes(), oneToOne, status => this.status.set(status)
+      );
       this.preparedWithPerspective = oneToOne;
       this.preparedSource=corrected;
       this.ready = atlas;
@@ -290,27 +205,10 @@ export class TechpackPreparerComponent {
     }
   }
 
-  /**
-   * Optional orientation correction for scans where the QR decoder gives a
-   * false corner. Rotate the source A3 page and perform a NEW registration:
-   * flipping only an already cropped atlas could keep incorrectly cut ink.
-   */
-  private rotatePage180(source: HTMLCanvasElement): HTMLCanvasElement {
-    const rotated=document.createElement('canvas');
-    rotated.width=source.width;
-    rotated.height=source.height;
-    const ctx=rotated.getContext('2d');
-    if(!ctx)throw new Error('Cannot rotate original A3 artwork');
-    ctx.translate(rotated.width,rotated.height);
-    ctx.rotate(Math.PI);
-    ctx.drawImage(source,0,0);
-    return rotated;
-  }
-
   rotateManualSource(): void {
     if (!this.original || this.busy()) return;
     const nextRotation = !this.manualRotation;
-    this.showCanvas(nextRotation ? this.rotatePage180(this.original) : this.original);
+    this.showCanvas(nextRotation ? this.preparation.rotatePage180(this.original) : this.original);
     this.manualRotation = nextRotation;
     this.ready = null;
     this.preparedSource = null;
@@ -335,7 +233,7 @@ export class TechpackPreparerComponent {
           source = await this.paper.straighten(source, corners);
         }
       }
-      if (this.manualRotation) source = this.rotatePage180(source);
+      if (this.manualRotation) source = this.preparation.rotatePage180(source);
 
       let texture = source;
       if (!this.readyToApplyAsIs()) {
@@ -359,7 +257,7 @@ export class TechpackPreparerComponent {
     this.busy.set(true);
     this.status.set('Rotating the entire A3 sheet 180° and rebuilding texture...');
     try {
-      const rotated=this.rotatePage180(this.preparedSource);
+      const rotated=this.preparation.rotatePage180(this.preparedSource);
       const panels=await this.panelCutout.registerPanels(rotated);
       const atlas = this.preparedWithPerspective
         ? this.uvAligner.renderContinuous(rotated, panels, true, true)

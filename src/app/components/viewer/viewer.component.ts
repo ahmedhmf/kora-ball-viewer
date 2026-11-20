@@ -1,7 +1,8 @@
-import { Component, ElementRef, ViewChild, AfterViewInit, inject, HostListener } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewInit, inject, HostListener, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router, RouterLink } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { BabylonEngineService } from '../../services/babylon-engine.service';
+import { BallTexturePreparationService } from '../../services/ball-texture-preparation.service';
 import { ModelLoaderService } from '../../services/model-loader.service';
 import { AuthService } from '../../services/auth.service';
 import { BallVisualizerStore } from '../../store/ball-visualizer.store';
@@ -27,7 +28,8 @@ export class ViewerComponent implements AfterViewInit {
   readonly authService = inject(AuthService);
   private babylonEngine = inject(BabylonEngineService);
   private modelLoader = inject(ModelLoaderService);
-  private readonly router = inject(Router);
+  private readonly preparation = inject(BallTexturePreparationService);
+  readonly pdfProgress = signal('');
 
   isCanvasDragOver = false;
   private dragCounter = 0;
@@ -54,15 +56,19 @@ export class ViewerComponent implements AfterViewInit {
   async onBallPdfSelected(input: HTMLInputElement): Promise<void> {
     const file = input.files?.[0];
     input.value = '';
-    if (!file) return;
+    if (!file || this.pdfProgress()) return;
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
       this.store.setStatus('Please select a PDF.');
       return;
     }
+    this.pdfProgress.set('Reading PDF...');
     try {
-      await this.router.navigate(['/prepare-design'], { info: file });
+      const texture = await this.preparation.preparePdf(file, status => this.pdfProgress.set(status));
+      await this.modelLoader.loadTextureFile(texture);
     } catch (error) {
-      this.store.setStatus('Could not open PDF preparation: ' + String(error));
+      this.store.setStatus('Could not prepare and apply PDF: ' + String(error));
+    } finally {
+      this.pdfProgress.set('');
     }
   }
 

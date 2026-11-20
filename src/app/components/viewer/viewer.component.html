@@ -92,10 +92,11 @@
       <h2 class="section-title">STRAIGHTEN WHATSAPP PDF / PHOTO</h2>
       <input #ballPdfInput type="file" accept=".pdf,application/pdf" hidden
         (change)="onBallPdfSelected(ballPdfInput)" />
-      <button type="button" (click)="ballPdfInput.click()"
+      <button type="button" [disabled]="!!pdfProgress()" (click)="ballPdfInput.click()"
         style="display:block;width:100%;padding:12px;border:1px solid #b91c1c;border-radius:6px;color:white;background:#7f1d1d;text-align:center;font-weight:700;cursor:pointer;">
         Upload PDF &amp; apply to ball
       </button>
+      <div role="status">{{ pdfProgress() }}</div>
       <a routerLink="/prepare-design">Manual texture preparation</a>
     </div>
     <div class="sidebar-section">
