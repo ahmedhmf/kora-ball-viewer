@@ -26,15 +26,15 @@ for(let i=0;i<32;i++){
 const component=readFileSync('src/app/components/techpack-preparer/techpack-preparer.component.ts','utf8');
 assert.ok(component.includes('PREPARE BALL TEXTURE'));
 assert.ok(component.includes('const panels=await this.panelCutout.registerPanels(corrected)'));
-assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(corrected,panels)'));
+assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'));
 assert.ok(component.includes('const panels=await this.panelCutout.registerPanels(rotated)'));
-assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(rotated,panels)'));
+assert.ok(component.includes('const atlas=this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes())'));
 const prepareStart=component.indexOf('async prepareBallTexture()');
 const flipStart=component.indexOf('async flipWholeSheet()');
 const registerAt=component.indexOf('this.panelCutout.registerPanels(corrected)',prepareStart);
-const renderAt=component.indexOf('this.uvAligner.renderContinuous(corrected,panels)',prepareStart);
+const renderAt=component.indexOf('this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())',prepareStart);
 const rotateRegisterAt=component.indexOf('this.panelCutout.registerPanels(rotated)',flipStart);
-const rotateRenderAt=component.indexOf('this.uvAligner.renderContinuous(rotated,panels)',flipStart);
+const rotateRenderAt=component.indexOf('this.uvAligner.renderContinuous(rotated,panels,this.preserveOriginalSizes())',flipStart);
 assert.ok(prepareStart>=0 && registerAt>prepareStart && renderAt>registerAt && renderAt<flipStart,
   'The one-click flow must register the original corrected image before rendering its OBJ UV islands');
 assert.ok(flipStart>=0 && rotateRegisterAt>flipStart && rotateRenderAt>rotateRegisterAt,
@@ -55,9 +55,14 @@ assert.ok(source.includes("if (mode === 'register') return source;"));
 assert.ok(!source.includes('refineKoraPanelCorners'), 'Unsafe per-edge snapping must not return');
 const renderer=readFileSync('src/app/services/kora-uv-align.service.ts','utf8');
 assert.ok(renderer.includes('Math.min(3 * sw / 725, 3 * sh / 1024)'), 'Legacy renderer remains available');
-assert.ok(component.includes('this.uvAligner.renderContinuous(corrected,panels)'), 'Use matching OBJ UV islands');
+assert.ok(component.includes('this.uvAligner.renderContinuous(corrected,panels,this.preserveOriginalSizes())'), 'Use matching OBJ UV islands');
 assert.ok(!component.includes('this.uvAligner.render(corrected,panels)'), 'Never cut the source into individual polygons');
-assert.ok(renderer.includes('renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][])'));
+assert.ok(component.includes('readonly preserveOriginalSizes = signal(true)'), 'Original panel proportions are the default');
+assert.ok(component.includes('Preserve original panel sizes (recommended)'));
+assert.ok(renderer.includes('if(preserveOriginalSizes)'));
+assert.ok(renderer.includes('const uniformCos=dot/denominator'));
+assert.ok(renderer.includes('if(!preserveOriginalSizes) {'), 'Local distortion must be opt-in');
+assert.ok(renderer.includes('renderContinuous(source: HTMLCanvasElement, sourcePanels: number[][][], preserveOriginalSizes = true)'));
 assert.ok(renderer.includes('actx.setTransform(a,c,b,d,tx,ty)'));
 assert.ok(renderer.includes('maskCtx.lineWidth=24'));
 
