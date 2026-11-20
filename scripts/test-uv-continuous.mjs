@@ -67,7 +67,8 @@ const renderer=new sandbox.exports.KoraUvAlignService();
 // Simulated registered full-resolution portrait scan, not a cropped/white image.
 const source={width:1450,height:2048};
 const from=printed.map(poly=>poly.map(([x,y])=>[x*2,y*2]));
-const atlas=renderer.renderContinuous(source,from);
+// Exercise the previous precise-fitted mode explicitly (opt-in).
+const atlas=renderer.renderContinuous(source,from,false);
 assert.equal(atlas.width,1024);
 assert.equal(atlas.height,1024);
 assert.equal(canvases.length,3,'One source canvas, one UV mask, one finished atlas');
@@ -133,8 +134,26 @@ assert.ok(measurements>100,'Test should cover more than 100 OBJ UV corners');
 assert.ok(after < before*.6,
   'Smooth continuous mapping must reduce mean corner sampling mismatch by at least 40%');
 
+const originalSizeAtlas=renderer.renderContinuous(source,from);
+assert.equal(originalSizeAtlas.width,1024);
+assert.equal(originalSizeAtlas.height,1024);
+assert.equal(canvases.length,6,'Both options produce three canvases each');
+const [uniformArt,uniformMask,uniformOutput]=canvases.slice(3);
+const similarity=uniformArt.ops.find(op=>op[0]==='setTransform');
+assert.ok(similarity,'Original-size option must use one global similarity transform');
+const [,sx,sy,negSy,secondScale]=similarity;
+assert.ok(Math.abs(sx-secondScale)<1e-10,'Uniform scaling in both axes');
+assert.ok(Math.abs(sy+negSy)<1e-10,'No shear or per-panel distortion');
+assert.equal(uniformArt.ops.filter(op=>op[0]==='drawImage' && op[1]===source).length,1,
+  'Original-size rendering draws the full source once');
+assert.equal(uniformArt.ops.filter(op=>op[0]==='putImageData').length,0,
+  'Original-size mode must not run the local warp');
+assert.equal(uniformMask.ops.filter(op=>op[0]==='beginPath').length,32);
+assert.equal(uniformOutput.width,1024);
+
+
 assert.throws(()=>renderer.renderContinuous(source,[]),/32 OBJ panels/);
 const wrong=from.map(p=>p.map(v=>v.slice()));
 wrong[1][0][0]=NaN;
 assert.throws(()=>renderer.renderContinuous(source,wrong),/Invalid printed\/UV corner/);
-console.log('PASS: 32 OBJ islands, one uncut original draw, 180 corners, mean corner sampling mismatch '+(before/measurements).toFixed(2)+'px -> '+(after/measurements).toFixed(2)+'px.');
+console.log('PASS: original-size similarity has no local distortion; optional fine-fit reduces sampling error '+(before/measurements).toFixed(2)+'px -> '+(after/measurements).toFixed(2)+'px.');
